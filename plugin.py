@@ -31,7 +31,9 @@ class DeepSeekWebSearchPlugin(BasePlugin):
 
     plugin_name = "deepseek_websearch"
 
-    configs: list[type] = [DeepSeekWebSearchConfig]
+    # 这里刻意不写类型注解：MPDT 的 ConfigValidator 只识别 configs = [...] 形式，
+    # 写成 configs: list[type] = [...] 会被误报「插件未定义配置类」。
+    configs = [DeepSeekWebSearchConfig]
     dependent_components: list[str] = []
 
     def __init__(self, config: Any = None) -> None:
