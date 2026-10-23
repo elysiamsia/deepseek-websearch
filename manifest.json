@@ -1,0 +1,57 @@
+{
+  "id": "deepseek_websearch",
+  "name": "deepseek_websearch",
+  "version": "1.0.0",
+  "description": "DeepSeek 官方联网搜索：用官方 Search / Fetch 接口给 LLM 与群聊提供实时网页检索与正文抓取，只吃搜索服务、不做对话识图，带缓存与费用统计。",
+  "author": "elysiamsia",
+  "dependencies": {
+    "plugins": [],
+    "components": []
+  },
+  "include": [
+    {
+      "component_type": "tool",
+      "component_name": "deepseek_search",
+      "dependencies": [],
+      "enabled": true
+    },
+    {
+      "component_type": "tool",
+      "component_name": "deepseek_fetch",
+      "dependencies": [],
+      "enabled": true
+    },
+    {
+      "component_type": "command",
+      "component_name": "ds",
+      "dependencies": [],
+      "enabled": true
+    },
+    {
+      "component_type": "service",
+      "component_name": "websearch",
+      "dependencies": [],
+      "enabled": true
+    }
+  ],
+  "entry_point": "plugin.py",
+  "api_version": {
+    "config_api": "1.0.0",
+    "log_api": "1.0.0",
+    "permission_api": "1.0.0",
+    "storage_api": "1.0.0"
+  },
+  "min_core_version": "1.2.0",
+  "categories": [
+    "tool"
+  ],
+  "tags": [
+    "search",
+    "websearch",
+    "deepseek",
+    "fetch",
+    "tool"
+  ],
+  "python_dependencies": [],
+  "dependencies_required": false
+}
