@@ -19,6 +19,7 @@ Search / Fetch 服务（**5 元 / 1000 次成功请求**），让 bot 能查实�
 | 自然语言触发 | 「帮我搜一下 xxx」直接触发一次检索，结果作为「系统注入」追加进本轮消息，**不用打命令、也不靠模型自觉**（可关、有冷却与每日上限） |
 | 聊天命令 `/ds` | 不依赖 LLM 决策，群聊里 `/ds 关键词` 直接搜、`/ds fetch 链接` 直接读 |
 | 跨插件服务 | `deepseek_websearch:service:websearch`，结构化返回，方便别的插件复用 |
+| 长文压缩 | 抓到的长正文可交给小模型（默认 <BT>utils_small<BT>）压缩后再注入，**默认关闭、关闭时走截断** |
 | 结果缓存 | 同一 query 在 TTL 内复用结果，**完全不重复计费** |
 | 费用与配额 | 按「成功请求」计数、估算金额、支持每日请求上限，`/ds stat` 随时看 |
 | 稳定接入 | 429 / 5xx / 网络错误自动退避重试；401 / 402 / 403 / 404 立即失败并给出可执行建议 |
@@ -99,8 +100,22 @@ auto_ori_question = true       # 自动把触发消息作为 ori_question 传入
 max_items_in_command = 6       # /ds 命令展示条数
 
 [fetch]
-max_chars = 12000              # 抓取正文上限
+max_chars = 12000              # 抓取正文上限（压缩关闭时按它截断；0 = 不截断）
+command_max_chars = 800        # /ds fetch 在聊天里展示多少字符
 block_private_hosts = true     # 拦截本机 / 内网地址（SSRF 防护）
+
+[compress]
+enabled = false                # 默认关闭：走截断。打开后长正文交给小模型压缩
+model = "utils_small"          # 任务名（model_tasks.*）或模型名，先任务后模型
+target_chars = 2000            # 压缩目标长度
+max_input_chars = 30000        # 送进模型的正文上限（超出取头 65% + 尾 35%）
+timeout_seconds = 90           # 压缩超时，超时即回退截断
+apply_to_fetch = true          # 压缩 deepseek_fetch / /ds fetch 的正文
+apply_to_search_content = true # 压缩 need_content 的搜索结果正文
+search_item_limit = 3          # 一次搜索最多压缩几条正文（控制费用）
+temperature = 0.3
+max_tokens = 0                 # 0 = 按目标长度自动估算（目标×1.6）
+system_prompt = ""             # 留空使用内置提示词
 
 [trigger]
 enabled = true                 # 自然语言触发总开关
@@ -173,6 +188,20 @@ max_entries = 128
 
 > 注意：注入内容会随这条用户消息一起进入会话历史，这是框架 BEFORE_MESSAGE_RECEIVED 的固有行为。
 > 介意历史膨胀就把 `count` 与 `max_inject_chars` 调小，或关闭 `[trigger].enabled`。
+
+### 1.5 正文压缩（可选）
+
+`[compress].enabled = false`（默认）时，长正文按 `[fetch].max_chars` / `[search].max_content_chars` 截断，行为和旧版一致。
+
+打开后：
+
+- 抓到的正文**不再设长度上限**，超过 `target_chars` 就交给小模型压到目标长度，再把压缩结果交给 LLM；
+- 默认用 model.toml 里的 `utils_small` 任务（也可填模型名，先按任务名解析、失败再按模型名）；
+- 送进模型的输入超过 `max_input_chars` 时，按「前 65% + 后 35%」采样并在中间标注省略字符数，避免超上下文与烧钱；
+- **压缩失败 / 超时 / 返回空内容一律回退截断**，结果里会写「压缩未生效，已截断到 N 字符」；
+- 同一段正文的压缩结果会缓存（按内容哈希），缓存命中或重复渲染不会重复调模型。
+
+成本参考：一条 2 万字的网页压到 2000 字，`utils_small` 大约几千 token，按你 model.toml 里的单价算下来是千分之几元量级。
 
 ### 2. LLM 工具（主路径）
 
@@ -296,6 +325,7 @@ deepseek-websearch/
 │   ├── query.py           # query 构造与过滤参数校验
 │   ├── cache.py           # TTL + LRU 缓存
 │   ├── usage.py           # 用量与费用统计
+│   ├── compressor.py      # 小模型压缩（可关闭，失败回退截断）
 │   ├── formatting.py      # Markdown / 纯文本渲染
 │   ├── models.py          # 数据模型
 │   └── errors.py          # 异常与中文修复建议
@@ -303,9 +333,11 @@ deepseek-websearch/
 │   ├── tools.py           # deepseek_search / deepseek_fetch
 │   ├── trigger.py         # 自然语言触发（BEFORE_MESSAGE_RECEIVED）
 │   ├── command.py         # /ds
+│   ├── llm_bridge.py      # 小模型调用桥（llm_api）
+│   ├── render.py          # 压缩/截断 + 格式化统一入口
 │   ├── service.py         # websearch 服务
 │   └── common.py
-├── tests/                 # 200 个单元测试（自带框架替身，不依赖 bot）
+├── tests/                 # 227 个单元测试（自带框架替身，不依赖 bot）
 ├── scripts/
 │   ├── build_mfp.py       # 打包 .mfp
 │   └── install_local.py   # 安装到指定 bot 的 plugins 目录
@@ -352,6 +384,12 @@ A：先看日志里有没有「自然语言触发」。没触发说明没命中�
 
 **Q：报「未找到 DeepSeek API Key」，但我 bot 的模型明明能用？**
 A：插件只认 `api.deepseek.com` 的官方 Key。如果你的对话模型走的是中转站，`model.toml` 里没有官方条目，需要手动填 `[api].api_key` 或设 `DEEPSEEK_API_KEY`；也可以用 `[api].key_provider` 指定某个 provider（前提是它兼容官方工具接口）。
+
+**Q：打开压缩后反而更慢/更贵？**
+A：每次压缩都是一次额外的小模型调用。控制三点：`search_item_limit`（一次搜索最多压几条）、`max_input_chars`（送进模型的长度）、`target_chars`（输出预算）。只想压网页正文就把 `apply_to_search_content` 关掉。
+
+**Q：压缩模型填什么？**
+A：默认 `utils_small`，也可以填 model.toml 里任意【任务名】或【模型名】。插件先按任务名解析，失败再按模型名；两者都解析不到时会回退截断并在日志里说明。
 
 **Q：能不能拿它当聊天模型用？**
 A：不能，也不打算支持。本插件只封装搜索与抓取两个端点，这是设计约束。

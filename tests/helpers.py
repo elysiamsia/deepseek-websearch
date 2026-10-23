@@ -106,9 +106,29 @@ def sample_result(title="标题", url="https://example.com/a"):
     )
 
 
+class FakeLLM:
+    """假的小模型调用：记录入参并返回预设文本。"""
+
+    def __init__(self, output="压缩后的正文", error=None):
+        self.output = output
+        self.error = error
+        self.calls: list[dict] = []
+
+    async def __call__(self, system: str, user: str, max_tokens: int) -> str:
+        """记录并返回。"""
+
+        self.calls.append(
+            {"system": system, "user": user, "max_tokens": max_tokens}
+        )
+        if self.error:
+            raise self.error
+        return self.output
+
+
 def build_runtime(**overrides):
     """构造 (Runtime, FakeClient, FakeStore, Clock)。"""
 
+    llm_call = overrides.pop("llm_call", None)
     config = framework_stub.build_config(**overrides)
     clock = Clock()
     store = FakeStore()
@@ -119,6 +139,7 @@ def build_runtime(**overrides):
         store=store,
         clock=clock,
         now=lambda: NOW,
+        llm_call=llm_call,
     )
     return runtime, client, store, clock
 

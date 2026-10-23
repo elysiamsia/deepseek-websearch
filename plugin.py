@@ -16,6 +16,7 @@ from src.app.plugin_system.api.log_api import get_logger
 from src.app.plugin_system.base import BasePlugin, register_plugin
 
 from .components.command import DeepSeekCommand
+from .components.llm_bridge import SmallModelBridge
 from .components.service import DeepSeekWebSearchService
 from .components.tools import DeepSeekFetchTool, DeepSeekSearchTool
 from .components.trigger import DeepSeekNaturalTrigger
@@ -64,7 +65,8 @@ class DeepSeekWebSearchPlugin(BasePlugin):
         async with self._runtime_lock:
             if self._runtime is None:
                 config = self._resolve_config()
-                runtime = Runtime(config, logger=logger)
+                bridge = SmallModelBridge(config)
+                runtime = Runtime(config, logger=logger, llm_call=bridge.complete)
                 await runtime.start()
                 self._runtime = runtime
                 logger.info("DeepSeek 搜索运行时已初始化")

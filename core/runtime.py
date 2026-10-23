@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 from .cache import TTLCache
 from .client import DeepSeekClient, validate_fetch_url
+from .compressor import CompressedText, ContentCompressor
 from .credentials import resolve_api_key
 from .errors import (
     BudgetExceededError,
@@ -87,6 +88,7 @@ class Runtime:
         cache: TTLCache | None = None,
         usage: UsageTracker | None = None,
         store: Any = None,
+        llm_call: Callable[[str, str, int], Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = datetime.now,
     ) -> None:
@@ -104,6 +106,19 @@ class Runtime:
             max_entries=int(getattr(config.cache, "max_entries", 128)),
             ttl_seconds=float(getattr(config.cache, "ttl_seconds", 600)),
             clock=clock,
+        )
+
+        # 正文压缩：默认关闭；llm_call 为空时压缩器等价于「只截断」
+        compress_config = getattr(config, "compress", None)
+        self.compressor = (
+            ContentCompressor(compress_config, call_llm=llm_call, logger=logger)
+            if compress_config is not None
+            else None
+        )
+        # 压缩结果缓存：同一段正文（含缓存命中的抓取结果）只压一次
+        ttl = float(getattr(config.cache, "ttl_seconds", 600) or 600)
+        self._shrink_cache = TTLCache(
+            max_entries=256, ttl_seconds=ttl if ttl > 0 else 3600, clock=clock
         )
 
     # -- 生命周期 -----------------------------------------------------------
@@ -133,6 +148,63 @@ class Runtime:
             await self.client.aclose()
             self.client = None
         self._started = False
+
+    # -- 正文压缩 -----------------------------------------------------------
+
+    @property
+    def compressor_enabled(self) -> bool:
+        """小模型压缩是否可用（开关打开且已注入模型调用）。"""
+
+        return bool(self.compressor is not None and self.compressor.enabled)
+
+    async def shrink_text(
+        self,
+        text: str,
+        *,
+        fallback_chars: int = 0,
+        kind: str = "fetch",
+    ) -> CompressedText:
+        """压缩（或截断）一段正文。
+
+        压缩关闭 / 失败时返回截断结果；成功结果按正文哈希缓存，避免同一段内容
+        因缓存命中或多次渲染而重复调用小模型。
+
+        Args:
+            text: 原始正文。
+            fallback_chars: 压缩不可用时的截断上限（0 表示不截断）。
+            kind: 内容类别（fetch / search），仅用于日志。
+
+        Returns:
+            CompressedText。
+        """
+
+        if self.compressor is None:
+            from .formatting import truncate_text
+
+            if fallback_chars and len(text) > fallback_chars:
+                return CompressedText(
+                    truncate_text(text, fallback_chars), "truncate", len(text)
+                )
+            return CompressedText(text, "passthrough", len(text))
+
+        if not self.compressor_enabled:
+            return await self.compressor.shrink(
+                text, fallback_chars=fallback_chars, kind=kind
+            )
+
+        target = self.compressor.target_chars
+        key = _compress_key(self.compressor.model, target, text)
+        cached = self._shrink_cache.get(key)
+        if isinstance(cached, str):
+            self.usage.record_cache_hit()
+            return CompressedText(cached, "llm", len(text))
+
+        result = await self.compressor.shrink(
+            text, fallback_chars=fallback_chars, kind=kind
+        )
+        if result.method == "llm":
+            self._shrink_cache.set(key, result.text)
+        return result
 
     # -- 对外能力 -----------------------------------------------------------
 
@@ -502,6 +574,13 @@ class Runtime:
                 self.logger.warning(message)
             except Exception:  # pragma: no cover
                 pass
+
+
+def _compress_key(model: str, target: int, text: str) -> str:
+    """压缩缓存键：模型 + 目标长度 + 正文内容。"""
+
+    raw = f"{model}|{int(target)}|{text}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _cache_key(kind: str, **fields: Any) -> str:

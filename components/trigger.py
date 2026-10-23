@@ -23,8 +23,9 @@ from src.core.components.types import EventType
 from src.kernel.event import EventDecision
 
 from ..core.errors import DeepSeekError
-from ..core.formatting import format_search_markdown, truncate_text
+from ..core.formatting import truncate_text
 from .common import get_runtime
+from .render import render_search_markdown
 
 logger = get_logger("deepseek_websearch")
 
@@ -207,13 +208,7 @@ class DeepSeekNaturalTrigger(BaseEventHandler):
             return EventDecision.PASS, params
 
         budget = int(getattr(trigger, "max_inject_chars", 1800))
-        block = format_search_markdown(
-            outcome,
-            max_summary_chars=500,
-            max_content_chars=max(200, budget // 2),
-            show_meta=True,
-            include_notice=True,
-        )
+        block = await render_search_markdown(runtime, outcome)
         block = truncate_text(block, max(200, budget))
 
         _write_segment_text(target, f"{original}{INJECT_HEADER}{block}{INJECT_FOOTER}")

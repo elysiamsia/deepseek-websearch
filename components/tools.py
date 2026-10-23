@@ -16,8 +16,9 @@ from src.app.plugin_system.api.log_api import get_logger
 from src.app.plugin_system.base import BaseTool
 
 from ..core.errors import DeepSeekError
-from ..core.formatting import format_error, format_fetch_markdown, format_search_markdown
+from ..core.formatting import format_error
 from .common import extract_trigger_text, get_runtime
+from .render import render_fetch_markdown, render_search_markdown
 
 logger = get_logger("deepseek_websearch")
 
@@ -92,15 +93,7 @@ class DeepSeekSearchTool(BaseTool):
                     f"缓存={outcome.cached}"
                 )
 
-            text = format_search_markdown(
-                outcome,
-                max_summary_chars=int(getattr(config.search, "max_summary_chars", 700)),
-                max_content_chars=int(getattr(config.search, "max_content_chars", 3000)),
-                show_meta=bool(getattr(config.search, "show_meta", True)),
-                include_notice=bool(
-                    getattr(config.search, "include_untrusted_notice", True)
-                ),
-            )
+            text = await render_search_markdown(runtime, outcome)
             return True, text
         except DeepSeekError as exc:
             logger.warning(f"deepseek_search 失败：{exc.describe()}")
@@ -142,7 +135,7 @@ class DeepSeekFetchTool(BaseTool):
             if limit <= 0:
                 limit = int(getattr(config.fetch, "max_chars", 12000))
 
-            outcome = await runtime.fetch(url, max_chars=limit)
+            outcome = await runtime.fetch(url)
 
             if bool(getattr(config.plugin, "debug_log", False)):
                 logger.info(
@@ -150,13 +143,7 @@ class DeepSeekFetchTool(BaseTool):
                     f"耗时 {outcome.elapsed_ms}ms，缓存={outcome.cached}"
                 )
 
-            text = format_fetch_markdown(
-                outcome,
-                max_chars=limit,
-                include_notice=bool(
-                    getattr(config.search, "include_untrusted_notice", True)
-                ),
-            )
+            text = await render_fetch_markdown(runtime, outcome, fallback_chars=limit)
             return True, text
         except DeepSeekError as exc:
             logger.warning(f"deepseek_fetch 失败：{exc.describe()}")

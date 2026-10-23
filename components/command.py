@@ -14,13 +14,9 @@ from src.app.plugin_system.base import BaseCommand
 from src.core.components.types import ChatType, PermissionLevel
 
 from ..core.errors import DeepSeekError
-from ..core.formatting import (
-    format_error,
-    format_fetch_text,
-    format_search_text,
-    format_usage_text,
-)
+from ..core.formatting import format_error, format_usage_text
 from .common import get_runtime
+from .render import render_fetch_text, render_search_text
 
 logger = get_logger("deepseek_websearch")
 
@@ -137,8 +133,7 @@ class DeepSeekCommand(BaseCommand):
             logger.warning(f"/ds 搜索失败：{exc.describe()}")
             return False, format_error(exc)
 
-        max_items = int(getattr(runtime.config.search, "max_items_in_command", 6))
-        text = format_search_text(outcome, max_summary_chars=140, max_items=max_items)
+        text = render_search_text(runtime, outcome)
         return True, self._with_usage(text, runtime, outcome.cost_cny)
 
     async def _handle_fetch(self, runtime: Any, tokens: list[str]) -> tuple[bool, str]:
@@ -152,13 +147,17 @@ class DeepSeekCommand(BaseCommand):
         if not url:
             return False, "❌ 请给出要抓取的链接，例如：/ds fetch https://example.com"
 
+        # 压缩打开时展示完整压缩结果；关闭时按命令展示上限截断
+        display_cap = max_chars or int(
+            getattr(runtime.config.fetch, "command_max_chars", 800) or 800
+        )
         try:
-            outcome = await runtime.fetch(url, max_chars=max_chars)
+            outcome = await runtime.fetch(url)
         except DeepSeekError as exc:
             logger.warning(f"/ds 抓取失败：{exc.describe()}")
             return False, format_error(exc)
 
-        text = format_fetch_text(outcome, max_chars=max_chars if max_chars > 0 else 800)
+        text = await render_fetch_text(runtime, outcome, fallback_chars=display_cap)
         return True, self._with_usage(text, runtime, outcome.cost_cny)
 
     async def _handle_stat(self, runtime: Any) -> tuple[bool, str]:

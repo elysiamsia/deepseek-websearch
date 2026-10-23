@@ -169,10 +169,13 @@ class DeepSeekWebSearchConfig(BaseConfig):
         )
         max_content_chars: int = Field(
             default=3000,
-            ge=200,
+            ge=0,
             le=20000,
-            description="单条结果正文的最大字符数（need_content 打开时生效）",
-            label="正文长度上限",
+            description=(
+                "need_content 打开时，单条结果正文的截断上限。"
+                "[compress].enabled 打开时改为小模型压缩，不再按此截断；填 0 表示不截断"
+            ),
+            label="结果正文上限",
             input_type="number",
             tag="text",
         )
@@ -211,10 +214,26 @@ class DeepSeekWebSearchConfig(BaseConfig):
 
         max_chars: int = Field(
             default=12000,
-            ge=500,
+            ge=0,
             le=100000,
-            description="单次抓取返回正文的最大字符数，超出会截断",
-            label="正文长度上限",
+            description=(
+                "抓取正文的截断上限，只作用于 deepseek_fetch 工具。"
+                "[compress].enabled 打开时不再截断，改为先用小模型压缩；"
+                "填 0 表示压缩关闭时也不截断（不推荐，会直接灌满上下文）"
+            ),
+            label="抓取正文上限",
+            input_type="number",
+            tag="text",
+        )
+        command_max_chars: int = Field(
+            default=800,
+            ge=100,
+            le=20000,
+            description=(
+                "/ds fetch 在聊天里展示多少字符（命令窗口不适合长文）。"
+                "压缩打开时展示压缩后的完整结果，这一项只限制截断模式"
+            ),
+            label="命令展示上限",
             input_type="number",
             tag="text",
         )
@@ -223,6 +242,112 @@ class DeepSeekWebSearchConfig(BaseConfig):
             description="是否拒绝抓取本机 / 内网地址（SSRF 防护，一般保持开启）",
             label="拦截内网地址",
             tag="security",
+        )
+
+    @config_section("compress", title="正文压缩（小模型）", tag="ai")
+    class CompressSection(SectionBase):
+        """抓到的长正文先交给一个小模型压缩，再交给 LLM。
+
+        默认关闭：关闭时沿用截断（[fetch].max_chars / [search].max_content_chars）。
+        压缩失败、超时或返回空内容时同样回退截断，不会把整次抓取弄挂。
+        """
+
+        enabled: bool = Field(
+            default=False,
+            description=(
+                "是否用小模型压缩抓取到的长正文。关闭时按旧逻辑截断；"
+                "打开后正文不再设上限，超过 target_chars 就交给模型压缩"
+            ),
+            label="启用小模型压缩",
+            tag="ai",
+        )
+        model: str = Field(
+            default="utils_small",
+            description=(
+                "用哪个小模型压缩：填 model.toml 的【任务名】（如 utils_small / utils）"
+                "或【模型名】（如 deepseek-v4.1-flash）。先按任务名解析，失败再按模型名"
+            ),
+            label="压缩模型",
+            placeholder="utils_small",
+            tag="ai",
+        )
+        target_chars: int = Field(
+            default=2000,
+            ge=200,
+            le=20000,
+            description="压缩后的目标字符数，压缩结果会按它校验",
+            label="目标长度",
+            input_type="number",
+            tag="text",
+        )
+        max_input_chars: int = Field(
+            default=30000,
+            ge=1000,
+            le=200000,
+            description=(
+                "送给模型的正文上限。超长网页按「前 65% + 后 35%」采样，"
+                "中间标注省略字符数，避免烧钱与超上下文"
+            ),
+            label="输入采样上限",
+            input_type="number",
+            tag="text",
+        )
+        timeout_seconds: int = Field(
+            default=90,
+            ge=5,
+            le=300,
+            description="单次压缩的超时秒数，超时即回退截断",
+            label="压缩超时（秒）",
+            input_type="number",
+            tag="network",
+        )
+        apply_to_fetch: bool = Field(
+            default=True,
+            description="是否压缩 deepseek_fetch / /ds fetch 抓到的正文",
+            label="用于网页抓取",
+            tag="ai",
+        )
+        apply_to_search_content: bool = Field(
+            default=True,
+            description="是否压缩 need_content 搜索结果里的每条正文",
+            label="用于搜索正文",
+            tag="ai",
+        )
+        search_item_limit: int = Field(
+            default=3,
+            ge=1,
+            le=20,
+            description="一次搜索最多压缩几条结果正文，其余仍按上限截断（控制费用）",
+            label="最多压缩条数",
+            input_type="number",
+            tag="performance",
+        )
+        temperature: float = Field(
+            default=0.3,
+            ge=0.0,
+            le=1.0,
+            description="压缩用的温度，低一些更稳定、更少发挥",
+            label="温度",
+            input_type="slider",
+            step=0.1,
+            tag="ai",
+        )
+        max_tokens: int = Field(
+            default=0,
+            ge=0,
+            le=32000,
+            description="压缩输出的 token 上限，0 表示按目标长度自动估算（目标×1.6）",
+            label="输出 token 上限",
+            input_type="number",
+            tag="ai",
+        )
+        system_prompt: str = Field(
+            default="",
+            description="自定义压缩提示词，留空使用内置（保留事实/数字/URL，删导航广告）",
+            label="自定义提示词",
+            input_type="textarea",
+            rows=5,
+            tag="text",
         )
 
     @config_section("trigger", title="自然语言触发", tag="ai")
@@ -412,5 +537,6 @@ class DeepSeekWebSearchConfig(BaseConfig):
     search: SearchSection = Field(default_factory=SearchSection)
     fetch: FetchSection = Field(default_factory=FetchSection)
     trigger: TriggerSection = Field(default_factory=TriggerSection)
+    compress: CompressSection = Field(default_factory=CompressSection)
     budget: BudgetSection = Field(default_factory=BudgetSection)
     cache: CacheSection = Field(default_factory=CacheSection)
