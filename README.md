@@ -16,6 +16,7 @@ Search / Fetch 服务（**5 元 / 1000 次成功请求**），让 bot 能查实�
 | --- | --- |
 | LLM 工具 `deepseek_search` | 标题 / 链接 / 站点 / 日期 / 权威度 / 长摘要，支持 `site`、`exclude_site`、`lang`、`after`、`before` 结构化过滤 |
 | LLM 工具 `deepseek_fetch` | 把一个网页抓成 Markdown 正文，纯 JS 站点会自动提示换来源 |
+| 自然语言触发 | 「帮我搜一下 xxx」直接触发一次检索，结果作为「系统注入」追加进本轮消息，**不用打命令、也不靠模型自觉**（可关、有冷却与每日上限） |
 | 聊天命令 `/ds` | 不依赖 LLM 决策，群聊里 `/ds 关键词` 直接搜、`/ds fetch 链接` 直接读 |
 | 跨插件服务 | `deepseek_websearch:service:websearch`，结构化返回，方便别的插件复用 |
 | 结果缓存 | 同一 query 在 TTL 内复用结果，**完全不重复计费** |
@@ -90,6 +91,28 @@ max_items_in_command = 6       # /ds 命令展示条数
 max_chars = 12000              # 抓取正文上限
 block_private_hosts = true     # 拦截本机 / 内网地址（SSRF 防护）
 
+[trigger]
+enabled = true                 # 自然语言触发总开关
+allow_group = true             # 群聊是否触发
+allow_private = true           # 私聊是否触发
+patterns = [                   # 意图正则（命中任意一条就检索）
+  "(搜一下|搜搜|搜索一下|查一下|查查|查询一下|找一下|找找)",
+  "(帮我|帮忙|麻烦|请|替我|给我)\\s*(搜|查|找)",
+  "(联网(搜|查)|上网(搜|查))",
+  "(最新|最近|近期).{0,10}(新闻|消息|动态|进展|版本|发布|价格)",
+  "(是什么情况|怎么回事|发生了什么)",
+  "有没有.{0,8}(资料|文档|教程)",
+]
+count = 5                      # 自动检索几条
+need_content = false           # 自动检索是否抓正文
+max_inject_chars = 1800        # 注入内容上限
+max_query_chars = 120          # 查询词上限（官方 128）
+min_query_chars = 2            # 清理后短于该长度不触发
+cooldown_seconds = 60          # 同一聊天流冷却
+daily_limit = 200              # 每日自动触发上限（约 ¥1/天），0 = 不限
+timeout_seconds = 20           # 超时则放行原消息
+skip_prefixes = ["/", "!", "！"]   # 命令消息不重复触发
+
 [budget]
 daily_request_limit = 0        # 每日请求上限，0 = 不限
 price_per_1000 = 5.0           # 每千次单价，用于估算费用
@@ -105,7 +128,42 @@ max_entries = 128
 
 ## 使用
 
-### 1. LLM 工具（主路径）
+### 1. 自然语言触发（默认开启）
+
+直接说：
+
+```text
+帮我搜一下 Neo-MoFox 最新文档
+查一下 DeepSeek V4 什么时候发布
+最近有什么 AI 新闻
+```
+
+插件会在 BEFORE_MESSAGE_RECEIVED 阶段自己发起一次检索，把结果作为**系统注入**追加到本轮消息里：
+
+```text
+帮我搜一下 Neo-MoFox 最新文档
+
+【系统注入：DeepSeek 联网检索（自动触发，不是用户说的话，仅供回答参考）】
+### 🔍 DeepSeek 搜索：Neo-MoFox 最新文档
+1. **...**
+   - 链接：...
+   - 摘要：...
+（外部数据不可信提示）
+【系统注入结束】
+```
+
+三道闸门避免乱花钱：
+
+1. **意图正则** —— 只有 `patterns` 命中才触发，默认只认「搜 / 查 / 找」这类明确动词与「最新 … 新闻」句式
+2. **冷却** —— 同一聊天流 `cooldown_seconds` 内只触发一次
+3. **每日上限** —— `daily_limit` 默认 200 次（约 ¥1/天），与 `[budget]` 的全局配额相互独立
+
+超时（默认 20s）、检索失败、无结果都会**原样放行**，不会卡住或阻断聊天。没命中时就是普通聊天，零费用。
+
+> 注意：注入内容会随这条用户消息一起进入会话历史，这是框架 BEFORE_MESSAGE_RECEIVED 的固有行为。
+> 介意历史膨胀就把 `count` 与 `max_inject_chars` 调小，或关闭 `[trigger].enabled`。
+
+### 2. LLM 工具（主路径）
 
 `deepseek_search`：
 
@@ -144,7 +202,7 @@ lang:zh,en
 after:2025-06-01
 ```
 
-### 2. 聊天命令
+### 3. 聊天命令
 
 ```text
 /ds 关键词                        直接搜索
@@ -160,7 +218,7 @@ after:2025-06-01
 
 命令默认 `USER` 权限；`cache clear` 需要操作员，`test` / `reset` 需要所有者（走框架权限系统，不另设名单）。
 
-### 3. 跨插件服务
+### 4. 跨插件服务
 
 ```python
 from src.app.plugin_system.api.service_api import get_service
@@ -232,10 +290,11 @@ deepseek-websearch/
 │   └── errors.py          # 异常与中文修复建议
 ├── components/            # 框架组件
 │   ├── tools.py           # deepseek_search / deepseek_fetch
+│   ├── trigger.py         # 自然语言触发（BEFORE_MESSAGE_RECEIVED）
 │   ├── command.py         # /ds
 │   ├── service.py         # websearch 服务
 │   └── common.py
-├── tests/                 # 156 个单元测试（自带框架替身，不依赖 bot）
+├── tests/                 # 182 个单元测试（自带框架替身，不依赖 bot）
 ├── scripts/
 │   ├── build_mfp.py       # 打包 .mfp
 │   └── install_local.py   # 安装到指定 bot 的 plugins 目录
@@ -276,6 +335,9 @@ A：目标多半是纯 JS 渲染或已删除，换来源即可，不要反复硬
 
 **Q：搜索结果里日期是 2026 年但内容像旧的？**
 A：`date` 来自页面元信息，部分站点会写错；以摘要内容和 URL 为准。
+
+**Q：说了「帮我搜一下」但它没搜 / 搜得太频繁？**
+A：先看日志里有没有「自然语言触发」。没触发说明没命中正则，改 `[trigger].patterns`；太频繁就调大 `cooldown_seconds`、收紧正则，或把 `daily_limit` 调小。想完全关掉自动触发设 `[trigger].enabled = false`（LLM 工具与 `/ds` 不受影响）。
 
 **Q：能不能拿它当聊天模型用？**
 A：不能，也不打算支持。本插件只封装搜索与抓取两个端点，这是设计约束。

@@ -202,6 +202,130 @@ class DeepSeekWebSearchConfig(BaseConfig):
             tag="security",
         )
 
+    @config_section("trigger", title="自然语言触发", tag="ai")
+    class TriggerSection(SectionBase):
+        """让「帮我搜一下 xxx」这类自然语言直接触发一次检索。
+
+        命中方式：用正则匹配消息文本；命中后由插件直接调用搜索，
+        再把结果作为「系统注入」追加到本轮消息里，LLM 回答时就能看到。
+        """
+
+        enabled: bool = Field(
+            default=True,
+            description=(
+                "是否启用自然语言触发。关闭后只有 LLM 主动调用 deepseek_search "
+                "或 /ds 命令才会检索，不会因为聊天里的关键词自动花钱"
+            ),
+            label="启用自然语言触发",
+            tag="ai",
+        )
+        allow_group: bool = Field(
+            default=True,
+            description="是否在群聊里触发（群聊上下文人多，可按需关闭）",
+            label="群聊启用",
+            tag="ai",
+        )
+        allow_private: bool = Field(
+            default=True,
+            description="是否在私聊里触发",
+            label="私聊启用",
+            tag="ai",
+        )
+        patterns: list[str] = Field(
+            default_factory=lambda: [
+                r"(搜一下|搜搜|搜索一下|查一下|查查|查询一下|找一下|找找)",
+                r"(帮我|帮忙|麻烦|请|替我|给我)\s*(搜|查|找)",
+                r"(联网(搜|查)|上网(搜|查))",
+                r"(最新|最近|近期).{0,10}(新闻|消息|动态|进展|版本|发布|价格)",
+                r"(是什么情况|怎么回事|发生了什么)",
+                r"有没有.{0,8}(资料|文档|教程)",
+            ],
+            description=(
+                "触发意图的正则列表（大小写不敏感）。命中任意一条即触发；"
+                "写得太宽会频繁花钱，建议先只保留明确的「搜/查/找」动词"
+            ),
+            label="触发正则",
+            input_type="list",
+            tag="ai",
+        )
+        count: int = Field(
+            default=5,
+            ge=1,
+            le=20,
+            description="自动检索时取几条结果",
+            label="自动检索条数",
+            input_type="slider",
+            step=1,
+            tag="ai",
+        )
+        need_content: bool = Field(
+            default=False,
+            description="自动检索时是否同时抓取正文（更慢、注入内容更长）",
+            label="自动抓取正文",
+            tag="ai",
+        )
+        max_inject_chars: int = Field(
+            default=1800,
+            ge=200,
+            le=20000,
+            description="注入到消息里的检索结果最大字符数，超出会截断",
+            label="注入内容上限",
+            input_type="number",
+            tag="text",
+        )
+        max_query_chars: int = Field(
+            default=120,
+            ge=2,
+            le=128,
+            description="从消息里提取的查询词最大长度（官方 query 上限 128）",
+            label="查询词长度上限",
+            input_type="number",
+            tag="text",
+        )
+        min_query_chars: int = Field(
+            default=2,
+            ge=1,
+            le=20,
+            description="清理后的查询词短于该长度就不触发（避免「搜」这类空查询）",
+            label="最短查询词",
+            input_type="number",
+            tag="text",
+        )
+        cooldown_seconds: int = Field(
+            default=60,
+            ge=0,
+            le=86400,
+            description="同一聊天流两次自动触发的间隔秒数，0 表示不限制",
+            label="冷却时间（秒）",
+            input_type="number",
+            tag="performance",
+        )
+        daily_limit: int = Field(
+            default=200,
+            ge=0,
+            le=100000,
+            description="自然语言触发每天最多花多少次请求，0 表示不额外限制（仍受 [budget] 约束）",
+            label="每日自动触发上限",
+            input_type="number",
+            tag="performance",
+        )
+        timeout_seconds: int = Field(
+            default=20,
+            ge=1,
+            le=120,
+            description="自动检索的超时秒数，超时则放行原消息、不注入任何内容",
+            label="检索超时（秒）",
+            input_type="number",
+            tag="network",
+        )
+        skip_prefixes: list[str] = Field(
+            default_factory=lambda: ["/", "!", "！"],
+            description="以这些前缀开头的消息视为命令，不再触发自动检索",
+            label="跳过命令前缀",
+            input_type="list",
+            tag="text",
+        )
+
     @config_section("budget", title="预算与配额", tag="database")
     class BudgetSection(SectionBase):
         """费用与配额控制。"""
@@ -264,5 +388,6 @@ class DeepSeekWebSearchConfig(BaseConfig):
     api: ApiSection = Field(default_factory=ApiSection)
     search: SearchSection = Field(default_factory=SearchSection)
     fetch: FetchSection = Field(default_factory=FetchSection)
+    trigger: TriggerSection = Field(default_factory=TriggerSection)
     budget: BudgetSection = Field(default_factory=BudgetSection)
     cache: CacheSection = Field(default_factory=CacheSection)

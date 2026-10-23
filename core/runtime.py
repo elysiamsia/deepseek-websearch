@@ -294,6 +294,18 @@ class Runtime:
             target, title, content, elapsed_ms, cached=False, cost=self._price_per_request()
         )
 
+    # -- 时间访问器（供上层做冷却 / 按日计数）---------------------------------
+
+    def now(self) -> datetime:
+        """当前墙上时间（测试可注入固定值）。"""
+
+        return self._now()
+
+    def monotonic(self) -> float:
+        """单调时钟秒数（测试可注入）。"""
+
+        return self._clock()
+
     # -- 展示 / 管理 --------------------------------------------------------
 
     def usage_snapshot(self) -> dict[str, Any]:

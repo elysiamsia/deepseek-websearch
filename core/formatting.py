@@ -21,8 +21,8 @@ UNTRUSTED_NOTICE = (
 _EMPTY_HINT = "没有找到相关结果。可以换个说法、去掉过滤条件，或把 query 写得更具体。"
 
 
-def _truncate(text: str, limit: int, *, suffix: str = "…") -> str:
-    """按字符数截断文本。"""
+def truncate_text(text: str, limit: int, *, suffix: str = "…") -> str:
+    """按字符数截断文本（limit <= 0 表示不截断）。"""
 
     if limit <= 0 or len(text) <= limit:
         return text
@@ -103,9 +103,9 @@ def format_search_markdown(
             lines.append(f"   - {' · '.join(meta)}")
         summary = item.best_text()
         if summary:
-            lines.append(f"   - 摘要：{_truncate(summary, max_summary_chars)}")
+            lines.append(f"   - 摘要：{truncate_text(summary, max_summary_chars)}")
         if item.content.strip():
-            lines.append(f"   - 正文摘录：{_truncate(item.content.strip(), max_content_chars)}")
+            lines.append(f"   - 正文摘录：{truncate_text(item.content.strip(), max_content_chars)}")
         lines.append("")
 
     if include_notice:
@@ -122,7 +122,7 @@ def format_fetch_markdown(
     """把抓取到的网页正文渲染成 Markdown（给 LLM 用）。"""
 
     title = outcome.title or outcome.url
-    body = _truncate(outcome.content.strip(), max_chars)
+    body = truncate_text(outcome.content.strip(), max_chars)
     header = [f"### 📄 DeepSeek 抓取：{title}"]
     meta = [outcome.url]
     if outcome.cached:
@@ -163,7 +163,7 @@ def format_search_text(
             lines.append(f"   {item.url}")
         summary = item.best_text()
         if summary:
-            lines.append(f"   {_truncate(summary, max_summary_chars)}")
+            lines.append(f"   {truncate_text(summary, max_summary_chars)}")
         lines.append("")
     if len(results) > len(shown):
         lines.append(f"（只显示前 {len(shown)} 条）")
@@ -175,7 +175,7 @@ def format_fetch_text(outcome: FetchOutcome, *, max_chars: int = 800) -> str:
     """把抓取结果渲染成纯文本（给 /ds 命令用）。"""
 
     title = outcome.title or outcome.url
-    body = _truncate(outcome.content.strip(), max_chars)
+    body = truncate_text(outcome.content.strip(), max_chars)
     lines = [f"📄 {title}", outcome.url, "", body]
     if outcome.content_chars > max_chars > 0:
         lines.append("")

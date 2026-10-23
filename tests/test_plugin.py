@@ -12,6 +12,7 @@ plugin_mod = framework_stub.import_component("plugin")
 components_tools = framework_stub.import_component("components.tools")
 components_command = framework_stub.import_component("components.command")
 components_service = framework_stub.import_component("components.service")
+components_trigger = framework_stub.import_component("components.trigger")
 
 
 class PluginClassTests(unittest.TestCase):
@@ -31,6 +32,7 @@ class PluginClassTests(unittest.TestCase):
                 components_tools.DeepSeekFetchTool,
                 components_command.DeepSeekCommand,
                 components_service.DeepSeekWebSearchService,
+                components_trigger.DeepSeekNaturalTrigger,
             ],
         )
         for component in components:

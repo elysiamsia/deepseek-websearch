@@ -46,6 +46,32 @@ Runtime.search
 SearchOutcome → formatting → LLM
 ```
 
+## 自然语言触发
+
+Tool 路径依赖模型自己决定是否调用（`tool_choice=auto`），小模型经常不调。触发器把「是否检索」从模型手里拿回来：
+
+```text
+适配器 → receiver.receive_envelope
+            │
+            ├─ 发布 BEFORE_MESSAGE_RECEIVED
+            │     └─ DeepSeekNaturalTrigger.execute
+            │          1. 取文本段（兼容单段 dict / 段列表 / {"text": ...}）
+            │          2. 开关、群聊私聊、命令前缀、意图正则
+            │          3. 冷却（平台+群号/用户号）与每日自动触发上限
+            │          4. clean_query：剥掉「帮我搜一下」等口语前缀
+            │          5. runtime.search(..., timeout=20s)  ← 失败/超时/无结果 → PASS
+            │          6. 就地把结果追加进文本段，返回 SUCCESS
+            ▼
+       MessageConverter → 正常 chatter 流程（LLM 已能看到结果）
+```
+
+设计取舍：
+
+- **为什么注入消息而不是另发一条**：另发消息要自己管发送与上下文同步，还会让用户看到两段；注入进本轮消息最省事，模型也一定看得到。代价是注入内容会进入会话历史，因此提供 `max_inject_chars` / `count` 控制体积，并可用 `[trigger].enabled` 整体关闭。
+- **为什么用 `timeout = 0`**：事件总线默认 30s 超时，取消耗时后我们会丢掉已经发出的请求；由插件用 `asyncio.wait_for` 自己控制更可控（默认 20s < 30s）。
+- **为什么异常一律 PASS**：触发器是增强，不是必经链路；任何失败都不能让用户的消息发不出去。
+- **为什么冷却按「平台+群号/用户号」**：群聊里多个用户连续提问是常态，按流冷却能避免一次话题引发连续计费，同时不误伤别的群。
+
 ## 错误映射
 
 | 上游状态 | 异常 | 是否重试 | 面向用户的建议 |

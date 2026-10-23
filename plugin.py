@@ -18,6 +18,7 @@ from src.app.plugin_system.base import BasePlugin, register_plugin
 from .components.command import DeepSeekCommand
 from .components.service import DeepSeekWebSearchService
 from .components.tools import DeepSeekFetchTool, DeepSeekSearchTool
+from .components.trigger import DeepSeekNaturalTrigger
 from .config import DeepSeekWebSearchConfig
 from .core.credentials import resolve_api_key
 from .core.runtime import Runtime
@@ -49,6 +50,7 @@ class DeepSeekWebSearchPlugin(BasePlugin):
             DeepSeekFetchTool,
             DeepSeekCommand,
             DeepSeekWebSearchService,
+            DeepSeekNaturalTrigger,
         ]
 
     # -- 运行时 -------------------------------------------------------------

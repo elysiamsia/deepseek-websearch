@@ -217,6 +217,26 @@ class BaseCommand:
         raise NotImplementedError
 
 
+class BaseEventHandler:
+    """替身版 EventHandler 基类。"""
+
+    name = ""
+    description = ""
+    weight = 0
+    intercept_message = False
+    init_subscribe: list[str] = []
+    timeout: float | None = None
+
+    def __init__(self, plugin: Any = None) -> None:
+        self.plugin = plugin
+        self._subscribed_events: set[str] = set()
+        for event in self.init_subscribe:
+            self._subscribed_events.add(getattr(event, "value", str(event)))
+
+    async def execute(self, event_name: str, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:  # pragma: no cover
+        raise NotImplementedError
+
+
 class BaseService:
     """替身版 Service 基类。"""
 
@@ -268,6 +288,21 @@ class PermissionLevel(IntEnum):
             "owner": cls.OWNER,
         }
         return mapping[str(value).strip().lower()]
+
+
+class EventType(str, Enum):
+    """事件类型（只列出本插件用到的）。"""
+
+    BEFORE_MESSAGE_RECEIVED = "before_message_received"
+    ON_MESSAGE_RECEIVED = "on_message_received"
+
+
+class EventDecision(str, Enum):
+    """事件订阅者决策。"""
+
+    SUCCESS = "SUCCESS"
+    STOP = "STOP"
+    PASS = "PASS"
 
 
 class ChatType(str, Enum):
@@ -404,6 +439,7 @@ def install() -> None:
     base_module.BaseTool = BaseTool
     base_module.BaseCommand = BaseCommand
     base_module.BaseService = BaseService
+    base_module.BaseEventHandler = BaseEventHandler
     base_module.BasePlugin = BasePlugin
     base_module.Field = Field
     base_module.SectionBase = SectionBase
@@ -428,9 +464,15 @@ def install() -> None:
     config_api = _ensure_module("src.app.plugin_system.api.config_api")
     config_api.load_config = load_config
 
+    kernel = _ensure_module("src.kernel")
+    kernel.__path__ = []  # type: ignore[attr-defined]
+    kernel_event = _ensure_module("src.kernel.event")
+    kernel_event.EventDecision = EventDecision
+
     types_module = _ensure_module("src.core.components.types")
     types_module.PermissionLevel = PermissionLevel
     types_module.ChatType = ChatType
+    types_module.EventType = EventType
 
     install._done = True  # type: ignore[attr-defined]
 
