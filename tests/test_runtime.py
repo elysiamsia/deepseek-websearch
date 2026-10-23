@@ -102,6 +102,24 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(errors.MissingAPIKeyError):
                 await runtime.search("q")
 
+    async def test_client_uses_model_toml_fallback_settings(self) -> None:
+        config = framework_stub.build_config(
+            api={
+                "model_config_path": "custom/model.toml",
+                "key_provider": "DeepSeek",
+            }
+        )
+        runtime = runtime_mod.Runtime(config, store=FakeStore(), clock=Clock(), now=lambda: NOW)
+        with mock.patch.object(
+            runtime_mod, "resolve_api_key", return_value=("sk-from-model-toml", "model.toml:DeepSeek")
+        ) as spy:
+            client = runtime._ensure_client()
+        kwargs = spy.call_args.kwargs
+        self.assertEqual(kwargs["model_config_path"], "custom/model.toml")
+        self.assertEqual(kwargs["provider_name"], "DeepSeek")
+        self.assertEqual(client.api_key, "sk-from-model-toml")
+        await runtime.aclose()
+
 
 class FetchTests(unittest.IsolatedAsyncioTestCase):
     """抓取编排。"""

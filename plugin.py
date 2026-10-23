@@ -105,7 +105,13 @@ class DeepSeekWebSearchPlugin(BasePlugin):
         limit = int(getattr(config.budget, "daily_request_limit", 0) or 0)
         limit_text = f"每日 {limit} 次" if limit > 0 else "不限"
 
-        key, source = resolve_api_key(str(getattr(config.api, "api_key", "") or ""))
+        key, source = resolve_api_key(
+            str(getattr(config.api, "api_key", "") or ""),
+            model_config_path=str(
+                getattr(config.api, "model_config_path", "") or "config/model.toml"
+            ),
+            provider_name=str(getattr(config.api, "key_provider", "") or ""),
+        )
         if not key:
             logger.warning(
                 "未找到 DeepSeek API Key，联网搜索会在首次调用时报错。"

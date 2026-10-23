@@ -2,6 +2,29 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-10-24
+
+### 修复
+
+- **移除与本机绑定的 Key 回退**：不再读取 `~/.claude/deepseek-websearch.json`。
+  那是开发机上的私有路径，别人部署 bot 时根本不存在，属于环境泄漏。
+- 第三级回退改为**本实例的 `config/model.toml`**：自动从 `[[api_providers]]` 里挑选
+  `base_url` 指向 `api.deepseek.com` 的条目并复用其 `api_key`，
+  只要 bot 的对话模型用的是 DeepSeek 官方端点，装完插件即可直接搜索。
+
+### 新增
+
+- 配置项 `[api].model_config_path`（默认 `config/model.toml`）与
+  `[api].key_provider`（强制指定 provider，留空自动挑官方端点）。
+- 支持 `api_key` 写成**数组**（多 Key 轮换写法）的 model.toml：取第一个非空项，避免把列表 repr 当作 Key 发送。
+- 新增 18 条 Key 解析测试，其中一条回归守卫断言解析过程**绝不访问用户主目录**。
+- 总计 200 条离线测试。
+
+### 变更
+
+- 解析链固定为：`[api].api_key` → `DEEPSEEK_API_KEY` → 本实例 `model.toml` 的官方 provider。
+- `MissingAPIKeyError` 的提示同步为新链路。
+
 ## [1.1.0] - 2026-10-23
 
 ### 新增

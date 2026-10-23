@@ -409,7 +409,13 @@ class Runtime:
         if self.client is not None:
             return self.client
 
-        key, source = resolve_api_key(str(getattr(self.config.api, "api_key", "") or ""))
+        key, source = resolve_api_key(
+            str(getattr(self.config.api, "api_key", "") or ""),
+            model_config_path=str(
+                getattr(self.config.api, "model_config_path", "") or "config/model.toml"
+            ),
+            provider_name=str(getattr(self.config.api, "key_provider", "") or ""),
+        )
         if not key:
             raise MissingAPIKeyError("未找到 DeepSeek API Key")
         self._api_key_source = source

@@ -53,12 +53,35 @@ class DeepSeekWebSearchConfig(BaseConfig):
         api_key: str = Field(
             default="",
             description=(
-                "DeepSeek API Key。留空时依次回退到环境变量 DEEPSEEK_API_KEY、"
-                "以及 ~/.claude/deepseek-websearch.json 中的 api_key 字段"
+                "DeepSeek API Key。留空时依次回退到：环境变量 DEEPSEEK_API_KEY → "
+                "本实例的 model_config_path（默认 config/model.toml）里 api_providers 中"
+                "指向 api.deepseek.com 的 api_key。"
+                "不读取任何与开发机绑定的文件，换台机器部署也能开箱复用已有的官方 Key"
             ),
             label="API Key",
             input_type="password",
             tag="security",
+        )
+        model_config_path: str = Field(
+            default="config/model.toml",
+            description=(
+                "第三级回退要读的模型配置文件（相对 bot 根目录，也可写绝对路径）。"
+                "随手填 Key 时这一项可以不管"
+            ),
+            label="模型配置文件",
+            placeholder="config/model.toml",
+            tag="network",
+        )
+        key_provider: str = Field(
+            default="",
+            description=(
+                "强制使用 model.toml 里某个 api_providers 的 Key（按 provider 名，大小写不敏感）。"
+                "留空时自动挑 base_url 指向 api.deepseek.com 的那个；"
+                "只有在中转站也兼容官方工具接口时才需要手动指定"
+            ),
+            label="指定 provider",
+            placeholder="DeepSeek",
+            tag="advanced",
         )
         base_url: str = Field(
             default="https://api.deepseek.com",

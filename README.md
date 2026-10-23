@@ -54,7 +54,16 @@ python scripts/install_local.py --plugins-dir "D:/Neo-MoFox-bot/bot-2780184392/n
 
 1. 配置项 `[api].api_key`
 2. 环境变量 `DEEPSEEK_API_KEY`
-3. `~/.claude/deepseek-websearch.json` 里的 `{"api_key": "sk-..."}`（兼容已有 skill，无需重复配置）
+3. **本实例的 `config/model.toml`**：从 `[[api_providers]]` 里自动挑一个
+   `base_url` 指向 `api.deepseek.com` 的条目，直接复用这个 bot 已经配好的官方 Key
+
+第 3 级是给部署方设计的：只要 bot 的对话模型用的是 DeepSeek 官方端点，装完插件**开箱即可搜索**，
+不用再单独填一份 Key。插件**不读取任何用户主目录或开发机私有文件**，换台机器行为一致。
+
+想强制用某个 provider（例如中转站也兼容官方工具接口）：填 `[api].key_provider = "provider 名"`。
+`[api].model_config_path` 可以改第 3 级读的文件（相对 bot 根目录或绝对路径）。
+
+`api_key` 写成字符串或数组都能识别（数组取第一个非空项，兼容 model.toml 的多 Key 轮换写法）。
 
 日志只会打印 `sk-a****1234` 这种脱敏形式。
 
@@ -68,7 +77,9 @@ show_usage_in_reply = true     # 命令回复末尾附一行用量
 debug_log = false              # 调试日志（输出 query/条数/耗时，不含 Key）
 
 [api]
-api_key = ""                   # 留空则回退到环境变量 / key 文件
+api_key = ""                   # 留空 → 环境变量 → 本实例 config/model.toml
+model_config_path = "config/model.toml"  # 第三级回退读取的模型配置
+key_provider = ""              # 强制用某个 provider 的 Key，留空则自动挑官方端点
 base_url = "https://api.deepseek.com"
 timeout_seconds = 60
 max_retries = 2                # 429/5xx/网络错误的重试次数
@@ -281,7 +292,7 @@ deepseek-websearch/
 ├── core/                  # 与框架解耦的核心实现
 │   ├── client.py          # DeepSeek API 客户端（端点白名单 / 重试 / 错误映射）
 │   ├── runtime.py         # 编排：缓存 → 配额 → 请求 → 计费 → 落盘
-│   ├── credentials.py     # Key 解析（config / env / key file）
+│   ├── credentials.py     # Key 解析（config / env / 本实例 model.toml）
 │   ├── query.py           # query 构造与过滤参数校验
 │   ├── cache.py           # TTL + LRU 缓存
 │   ├── usage.py           # 用量与费用统计
@@ -294,7 +305,7 @@ deepseek-websearch/
 │   ├── command.py         # /ds
 │   ├── service.py         # websearch 服务
 │   └── common.py
-├── tests/                 # 182 个单元测试（自带框架替身，不依赖 bot）
+├── tests/                 # 200 个单元测试（自带框架替身，不依赖 bot）
 ├── scripts/
 │   ├── build_mfp.py       # 打包 .mfp
 │   └── install_local.py   # 安装到指定 bot 的 plugins 目录
@@ -338,6 +349,9 @@ A：`date` 来自页面元信息，部分站点会写错；以摘要内容和 UR
 
 **Q：说了「帮我搜一下」但它没搜 / 搜得太频繁？**
 A：先看日志里有没有「自然语言触发」。没触发说明没命中正则，改 `[trigger].patterns`；太频繁就调大 `cooldown_seconds`、收紧正则，或把 `daily_limit` 调小。想完全关掉自动触发设 `[trigger].enabled = false`（LLM 工具与 `/ds` 不受影响）。
+
+**Q：报「未找到 DeepSeek API Key」，但我 bot 的模型明明能用？**
+A：插件只认 `api.deepseek.com` 的官方 Key。如果你的对话模型走的是中转站，`model.toml` 里没有官方条目，需要手动填 `[api].api_key` 或设 `DEEPSEEK_API_KEY`；也可以用 `[api].key_provider` 指定某个 provider（前提是它兼容官方工具接口）。
 
 **Q：能不能拿它当聊天模型用？**
 A：不能，也不打算支持。本插件只封装搜索与抓取两个端点，这是设计约束。

@@ -58,8 +58,9 @@ class MissingAPIKeyError(ConfigError):
     """没有找到 DeepSeek API Key。"""
 
     default_hint = (
-        "在 config/plugins/deepseek_websearch/config.toml 的 [api].api_key 填入 Key，"
-        "或设置环境变量 DEEPSEEK_API_KEY"
+        "在 config/plugins/deepseek_websearch/config.toml 的 [api].api_key 填入 Key；"
+        "或设置环境变量 DEEPSEEK_API_KEY；"
+        "或确保本实例 config/model.toml 里有一个指向 api.deepseek.com 的 api_providers 条目"
     )
 
 
