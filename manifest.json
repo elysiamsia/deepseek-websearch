@@ -1,7 +1,7 @@
 {
   "id": "deepseek_websearch",
   "name": "deepseek_websearch",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "DeepSeek 官方联网搜索：官方 Search / Fetch 接入 LLM 工具、/ds 命令与自然语言触发，可选小模型压缩长正文，只吃搜索服务不做对话识图，自带缓存、费用统计与 SSRF 防护。",
   "author": "elysiamsia",
   "dependencies": {
