@@ -120,9 +120,25 @@ def build(output_dir: Path, fmt: str) -> Path:
     return archive_path
 
 
+def _configure_console() -> None:
+    """Windows 控制台默认 GBK，直接打印 emoji 会抛 UnicodeEncodeError。
+
+    尽量把 stdout 切到 UTF-8；切不动就退化成替换字符，绝不因为一句日志把打包搞挂。
+    """
+
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):  # pragma: no cover - 依赖运行环境
+        pass
+
+
 def main() -> int:
     """命令行入口。"""
 
+    _configure_console()
     parser = argparse.ArgumentParser(description="打包 Neo-MoFox 插件为 .mfp")
     parser.add_argument("-o", "--output", default="dist", help="输出目录（默认 dist/）")
     parser.add_argument("--format", choices=("mfp", "zip"), default="mfp", help="包格式（默认 mfp）")
