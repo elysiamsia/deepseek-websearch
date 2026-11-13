@@ -106,7 +106,8 @@ class TriggerBehaviourTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(text.startswith("帮我搜一下 Neo-MoFox 插件开发"))
         self.assertEqual(client.search_calls, 1)
         self.assertEqual(client.last_search["query"], "Neo-MoFox 插件开发")
-        self.assertEqual(client.last_search["count"], 5)
+        # 1.4.0 有意把默认值从 5 收紧到 3（注入更短、LLM 首字更快）
+        self.assertEqual(client.last_search["count"], 3)
 
     async def test_segment_list_form(self) -> None:
         handler, _, client, _ = await self.make_handler()
