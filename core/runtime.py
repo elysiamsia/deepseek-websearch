@@ -11,9 +11,11 @@ Tool、Command、Service 都只跟 Runtime 打交道，保持组件类足够薄�
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Callable
 
@@ -27,7 +29,7 @@ from .errors import (
     MissingAPIKeyError,
     PluginDisabledError,
 )
-from .models import FetchOutcome, SearchOutcome, SearchResult
+from .models import BatchFetchItem, FetchOutcome, SearchOutcome, SearchResult
 from .query import build_query
 from .usage import UsageTracker
 
@@ -150,6 +152,23 @@ class Runtime:
             self.client = None
         self._started = False
 
+    def prewarm(self) -> bool:
+        """预热运行时：只创建客户端，不发起任何网络请求。
+
+        没有 Key、配置不完整等失败都只写一条 warning 并返回 False，
+        首次真实调用时会再报一次具体错误，这里不抛异常。
+
+        Returns:
+            True 表示客户端已就绪，False 表示预热失败。
+        """
+
+        try:
+            self._ensure_client()
+        except Exception as exc:  # 预热失败不能影响插件加载
+            self._warn(f"运行时预热失败，首次调用时会再试：{exc}")
+            return False
+        return True
+
     # -- 正文压缩 -----------------------------------------------------------
 
     @property
@@ -262,13 +281,16 @@ class Runtime:
         )
         question = (ori_question or "").strip()[:MAX_ORI_QUESTION]
 
-        key = _cache_key(
-            "search",
-            query=composed,
-            count=resolved_count,
-            need_content=want_content,
-            ori_question=question,
-        )
+        key_fields: dict[str, Any] = {
+            "query": composed,
+            "count": resolved_count,
+            "need_content": want_content,
+        }
+        # ori_question 只是给搜索引擎的意图提示，默认不参与缓存键：
+        # 同一查询换个问法仍然复用同一次结果，避免白花一次请求的钱。
+        if bool(getattr(self.config.cache, "key_includes_ori_question", False)):
+            key_fields["ori_question"] = question
+        key = _cache_key("search", **key_fields)
         if use_cache and self._cache_enabled:
             cached = self.cache.get(key)
             if cached is not None:
@@ -366,6 +388,56 @@ class Runtime:
         return self._fetch_outcome(
             target, title, content, elapsed_ms, cached=False, cost=self._price_per_request()
         )
+
+    async def fetch_many(
+        self,
+        urls: Sequence[str],
+        *,
+        max_chars: int = 0,
+        concurrency: int = 0,
+        use_cache: bool = True,
+    ) -> list[BatchFetchItem]:
+        """并发抓取多个网页，单条失败不影响整批。
+
+        去重保序、超过 [fetch].max_batch 的部分直接截断；每条结果按输入顺序返回，
+        失败原因记在对应条目的 error 上。本方法自身不抛异常（取消除外）。
+
+        Args:
+            urls: 目标链接集合（空串与纯空白会被忽略）。
+            max_chars: 每条正文上限，0 表示使用抓取默认值。
+            concurrency: 并发度，0 表示使用 [fetch].max_batch_concurrency。
+            use_cache: 是否允许命中缓存。
+
+        Returns:
+            list[BatchFetchItem]，顺序与去重后的输入顺序一致。
+        """
+
+        targets = self._batch_targets(urls)
+        if not targets:
+            return []
+
+        semaphore = asyncio.Semaphore(self._batch_workers(concurrency))
+
+        async def _one(url: str) -> BatchFetchItem:
+            """抓取单条：任何异常都折进该条目的 error，绝不外抛。"""
+
+            async with semaphore:
+                try:
+                    outcome = await self.fetch(
+                        url, max_chars=max_chars, use_cache=use_cache
+                    )
+                except DeepSeekError as exc:
+                    return BatchFetchItem(url=url, outcome=None, error=exc)
+                except Exception as exc:  # noqa: BLE001 - 单条失败不影响其它条
+                    return BatchFetchItem(
+                        url=url,
+                        outcome=None,
+                        error=DeepSeekError(f"抓取 {url} 失败：{exc}"),
+                    )
+            return BatchFetchItem(url=url, outcome=outcome, error=None)
+
+        # gather 保持输入顺序；_one 不会抛 Exception，因此不会出现部分结果丢失
+        return list(await asyncio.gather(*(_one(url) for url in targets)))
 
     # -- 时间访问器（供上层做冷却 / 按日计数）---------------------------------
 
@@ -532,6 +604,30 @@ class Runtime:
             return default
         return max(1, min(value, upper))
 
+    def _batch_targets(self, urls: Sequence[str]) -> list[str]:
+        """批量抓取的目标列表：去空、去重保序、按 [fetch].max_batch 截断。"""
+
+        limit = _int_or(getattr(self.config.fetch, "max_batch", 5), 5)
+        seen: set[str] = set()
+        targets: list[str] = []
+        for url in urls or ():
+            text = str(url or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            targets.append(text)
+            if limit > 0 and len(targets) >= limit:
+                break
+        return targets
+
+    def _batch_workers(self, concurrency: int) -> int:
+        """批量抓取的并发度：至少 1，避免 Semaphore(0) 卡死。"""
+
+        value = _int_or(concurrency, 0)
+        if value <= 0:
+            value = _int_or(getattr(self.config.fetch, "max_batch_concurrency", 5), 5)
+        return max(1, value)
+
     @property
     def _cache_enabled(self) -> bool:
         """缓存开关。"""
@@ -594,6 +690,15 @@ def _compress_key(model: str, target: int, text: str) -> str:
 
     raw = f"{model}|{int(target)}|{text}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _int_or(value: Any, default: int) -> int:
+    """把配置值安全转成整数（None / 非法值退回默认值）。"""
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _cache_key(kind: str, **fields: Any) -> str:

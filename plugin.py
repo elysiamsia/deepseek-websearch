@@ -42,6 +42,7 @@ class DeepSeekWebSearchPlugin(BasePlugin):
         super().__init__(config)
         self._runtime: Runtime | None = None
         self._runtime_lock = asyncio.Lock()
+        self._prewarm_task: asyncio.Task[None] | None = None
 
     def get_components(self) -> list[type]:
         """返回插件提供的组件类。"""
@@ -129,8 +130,27 @@ class DeepSeekWebSearchPlugin(BasePlugin):
             f"缓存={'开' if cache_enabled else '关'}（TTL {cache_ttl}s），配额={limit_text}"
         )
 
+        # 后台预热：只建客户端不发请求，避免加载期阻塞，也让首次调用少一次初始化抖动
+        if bool(getattr(config.plugin, "prewarm", True)):
+            self._prewarm_task = asyncio.create_task(self._prewarm())
+
+    async def _prewarm(self) -> None:
+        """后台预热运行时（先让出一次事件循环，失败只记日志）。"""
+
+        try:
+            await asyncio.sleep(0)
+            runtime = self._runtime
+            if runtime is not None:
+                runtime.prewarm()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # 预热失败不影响插件本身
+            logger.warning(f"DeepSeek 搜索运行时预热失败：{exc!r}")
+
     async def on_plugin_unloaded(self) -> None:
-        """插件卸载：落盘用量并释放连接。"""
+        """插件卸载：停掉预热任务、落盘用量并释放连接。"""
+
+        await self._cancel_prewarm()
 
         runtime = self._runtime
         self._runtime = None
@@ -140,3 +160,18 @@ class DeepSeekWebSearchPlugin(BasePlugin):
             await runtime.aclose()
         except Exception as exc:
             logger.warning(f"关闭 DeepSeek 搜索运行时失败：{exc!r}")
+
+    async def _cancel_prewarm(self) -> None:
+        """取消尚未完成的预热任务（已完成的直接放行）。"""
+
+        task = self._prewarm_task
+        self._prewarm_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # 预热本身已经吞过异常，这里只兜底
+            logger.warning(f"等待预热任务结束失败：{exc!r}")
