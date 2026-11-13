@@ -7,7 +7,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:  # 仅用于类型注解，避免运行期循环导入
+    from .errors import DeepSeekError
 
 
 def _as_text(value: Any) -> str:
@@ -129,3 +132,30 @@ class FetchOutcome:
         """正文原始字符数。"""
 
         return len(self.content)
+
+
+@dataclass(frozen=True, slots=True)
+class BatchFetchItem:
+    """批量抓取中的一条结果：成功带 outcome，失败带 error。
+
+    Attributes:
+        url: 该条对应的链接（已去掉首尾空白）。
+        outcome: 成功时的抓取结果。
+        error: 失败时的异常（非 DeepSeekError 会被包装成基类异常）。
+    """
+
+    url: str
+    outcome: FetchOutcome | None = None
+    error: DeepSeekError | None = None
+
+    @property
+    def ok(self) -> bool:
+        """该条是否抓取成功。"""
+
+        return self.error is None and self.outcome is not None
+
+    @property
+    def title(self) -> str:
+        """成功时用网页标题，失败时退回链接本身。"""
+
+        return self.outcome.title if self.outcome is not None else self.url
