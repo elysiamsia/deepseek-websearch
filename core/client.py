@@ -38,6 +38,7 @@ from .errors import (
     UpstreamError,
 )
 from .models import SearchResult
+from .tls import get_shared_ssl_context
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_USER_AGENT = "Neo-MoFox-DeepSeek-WebSearch/1.0 (+https://docs.mofox.chat)"
@@ -216,6 +217,8 @@ class DeepSeekClient:
         clock: 单调时钟。
         logger: 日志器，需提供 warning 方法。
         rng: 抖动随机源。
+        reuse_ssl_context: 是否复用进程内共享的 TLS 上下文。
+        keepalive_seconds: 连接池 keepalive 秒数，小于等于 0 时回退到 5 秒。
     """
 
     def __init__(
@@ -235,6 +238,8 @@ class DeepSeekClient:
         clock: Callable[[], float] = time.monotonic,
         logger: Any = None,
         rng: random.Random | None = None,
+        reuse_ssl_context: bool = True,
+        keepalive_seconds: float = 120.0,
     ) -> None:
         key = (api_key or "").strip()
         if not key:
@@ -253,6 +258,8 @@ class DeepSeekClient:
         self.proxy = (proxy or "").strip()
         self.verify_ssl = bool(verify_ssl)
         self.user_agent = user_agent or DEFAULT_USER_AGENT
+        self.reuse_ssl_context = bool(reuse_ssl_context)
+        self.keepalive_seconds = float(keepalive_seconds)
 
         self._http_post = http_post or self._httpx_post
         self._sleep = sleep or asyncio.sleep
@@ -513,11 +520,19 @@ class DeepSeekClient:
             ) from exc
 
         if self._client is None:
+            verify: Any = self.verify_ssl
+            if verify and self.reuse_ssl_context:
+                verify = get_shared_ssl_context() or True
+            keepalive = self.keepalive_seconds if self.keepalive_seconds > 0 else 5.0
             kwargs: dict[str, Any] = {
                 "timeout": httpx.Timeout(timeout),
                 "trust_env": self.use_proxy,
-                "verify": self.verify_ssl,
-                "limits": httpx.Limits(max_connections=8, max_keepalive_connections=4),
+                "verify": verify,
+                "limits": httpx.Limits(
+                    max_connections=8,
+                    max_keepalive_connections=4,
+                    keepalive_expiry=keepalive,
+                ),
                 "follow_redirects": False,
             }
             if self.proxy:
