@@ -290,7 +290,8 @@ class BatchFetchItem:
 - **v1.3.3 已经存在**：commit `e18ae9a` 已 push，GitHub Release v1.3.3 + tag 已建（资产 sha256 `fc62af2e…47787d`），**但从未上过插件市场**。
   - 方案 A（默认）：保留 git 历史与 Release，只是不上市场，1.4.0 覆盖式发布。
   - 方案 B：删掉 tag 与 Release，1.4.0 成为唯一发布版本。
-  - 需要主人二选一。
+  - **已选 A**（2026-11-13，主人指示「A，开工」）：保留 v1.3.3 的提交与 Release，
+    1.4.0 覆盖式发布，市场只上 1.4.0。
 
 ---
 
