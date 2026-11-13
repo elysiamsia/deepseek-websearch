@@ -8,13 +8,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import certifi
+try:  # 运行时由 Neo-MoFox 核心提供；离线环境缺它时整组跳过，而不是让整套测试失败
+    import certifi
+except ImportError:  # pragma: no cover - 仅缺少依赖时走到
+    certifi = None  # type: ignore[assignment]
 
 from tests import framework_stub
 
 tls = framework_stub.import_component("core.tls")
 
 
+@unittest.skipIf(certifi is None, "需要 certifi（httpx 的依赖）")
 class SharedContextTests(unittest.TestCase):
     """单例复用、失败记忆与重置。"""
 

@@ -6,7 +6,10 @@ import ssl
 import unittest
 from unittest import mock
 
-import httpx
+try:  # 运行时由 Neo-MoFox 核心提供；离线环境缺它时整组跳过
+    import httpx
+except ImportError:  # pragma: no cover - 仅缺少依赖时走到
+    httpx = None  # type: ignore[assignment]
 
 from tests import framework_stub
 
@@ -45,6 +48,7 @@ def make_client(**kwargs):
     )
 
 
+@unittest.skipIf(httpx is None, "需要 httpx")
 class TransportOptionsTests(unittest.IsolatedAsyncioTestCase):
     """验证建客户端时传给 httpx 的参数。"""
 
