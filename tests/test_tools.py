@@ -133,8 +133,9 @@ class FetchToolTests(unittest.IsolatedAsyncioTestCase):
     def test_schema(self) -> None:
         schema = tools_mod.DeepSeekFetchTool._schema()
         params = schema["function"]["parameters"]
-        self.assertEqual(params["required"], ["url"])
+        self.assertEqual(params["required"], [])
         self.assertTrue(params["properties"]["url"]["description"])
+        self.assertTrue(params["properties"]["urls"]["description"])
 
 
 if __name__ == "__main__":

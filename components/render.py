@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import Any
 
 from ..core.formatting import (
+    UNTRUSTED_NOTICE,
     format_fetch_markdown,
     format_fetch_text,
     format_search_markdown,
@@ -42,29 +44,49 @@ async def prepare_search(
         int(getattr(config.compress, "search_item_limit", 3) or 0) if use_compress else 0
     )
 
-    used = 0
     compressed_items = 0
     original_total = 0
     items = []
 
-    for item in outcome.results:
+    # 先圈出需要压缩的下标，再一次性并发调用：顺序、条数上限与统计口径
+    # 都和逐条处理时一致，只是把多次串行等待叠在一起。
+    shrink_indices: list[int] = []
+    if use_compress:
+        for index, item in enumerate(outcome.results):
+            if not item.content.strip():
+                continue
+            if item_limit and len(shrink_indices) >= item_limit:
+                break
+            shrink_indices.append(index)
+
+    shrunk_list = (
+        await asyncio.gather(
+            *(
+                runtime.shrink_text(
+                    outcome.results[index].content,
+                    fallback_chars=fallback,
+                    kind="search",
+                )
+                for index in shrink_indices
+            )
+        )
+        if shrink_indices
+        else []
+    )
+    shrunk_by_index = dict(zip(shrink_indices, shrunk_list))
+
+    for index, item in enumerate(outcome.results):
         content = item.content
         if not content.strip():
             items.append(item)
             continue
 
-        if not use_compress:
+        shrunk = shrunk_by_index.get(index)
+        if shrunk is None:
             text = truncate_text(content, fallback) if fallback else content
             items.append(replace(item, content=text))
             continue
 
-        if item_limit and used >= item_limit:
-            text = truncate_text(content, fallback) if fallback else content
-            items.append(replace(item, content=text))
-            continue
-
-        shrunk = await runtime.shrink_text(content, fallback_chars=fallback, kind="search")
-        used += 1
         if shrunk.method == "llm":
             compressed_items += 1
             original_total += shrunk.original_chars
@@ -175,3 +197,75 @@ async def render_fetch_text(
     prepared, note = await prepare_fetch(runtime, outcome, fallback_chars=fallback_chars)
     text = format_fetch_text(prepared, max_chars=0)
     return f"{text}\n\n{note}" if note else text
+
+
+# ---------------------------------------------------------------------------
+# 批量抓取渲染
+# ---------------------------------------------------------------------------
+
+
+def _batch_all_failed(items: list[Any]) -> str:
+    """所有条目都失败时的错误汇总。"""
+
+    lines = ["❌ 全部抓取失败："]
+    for item in items:
+        reason = item.error.describe() if item.error is not None else "未知原因"
+        lines.append(f"- {item.title}：{reason}")
+    return "\n".join(lines)
+
+
+async def _batch_body(runtime: Any, item: Any, fallback_chars: int) -> str:
+    """复用单条抓取的压缩 / 截断链路，取出正文与说明。"""
+
+    prepared, note = await prepare_fetch(
+        runtime, item.outcome, fallback_chars=fallback_chars
+    )
+    body = prepared.content.strip()
+    if not note:
+        return body
+    return f"{body}\n\n{note}" if body else note
+
+
+async def render_fetch_batch_markdown(
+    runtime: Any, items: list[Any], fallback_chars: int
+) -> str:
+    """多条抓取结果 → 给 LLM 的 Markdown（失败条目单独列出原因）。"""
+
+    if not items:
+        return "❌ 没有需要抓取的链接"
+    if not any(item.ok for item in items):
+        return _batch_all_failed(items)
+
+    blocks: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if not item.ok:
+            reason = item.error.describe() if item.error is not None else "未知原因"
+            blocks.append(f"## {index}. {item.title}\n\n抓取失败：{reason}")
+            continue
+        body = await _batch_body(runtime, item, fallback_chars)
+        blocks.append(f"## {index}. {item.title}\n链接：{item.url}\n\n{body}")
+
+    if bool(getattr(runtime.config.search, "include_untrusted_notice", True)):
+        blocks.append(UNTRUSTED_NOTICE)
+    return "\n\n".join(blocks).rstrip()
+
+
+async def render_fetch_batch_text(
+    runtime: Any, items: list[Any], fallback_chars: int
+) -> str:
+    """多条抓取结果 → 给 /ds 命令的纯文本。"""
+
+    if not items:
+        return "❌ 没有需要抓取的链接"
+    if not any(item.ok for item in items):
+        return _batch_all_failed(items)
+
+    blocks: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if not item.ok:
+            reason = item.error.describe() if item.error is not None else "未知原因"
+            blocks.append(f"{index}. {item.title}\n抓取失败：{reason}")
+            continue
+        body = await _batch_body(runtime, item, fallback_chars)
+        blocks.append(f"{index}. {item.title}\n{item.url}\n\n{body}")
+    return "\n\n".join(blocks).rstrip()
