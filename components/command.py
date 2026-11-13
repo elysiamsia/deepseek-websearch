@@ -207,7 +207,8 @@ class DeepSeekCommand(BaseCommand):
         return True, (
             "✅ 自检通过\n"
             f"结果：{outcome.count} 条，耗时 {outcome.elapsed_ms}ms\n"
-            f"Key 来源：{snapshot.get('api_key_source', '未知')}\n"
+            f"Key 来源：{snapshot.get('api_key_source', '未知')}"
+            f"{'（' + snapshot.get('api_key_masked', '') + '）' if snapshot.get('api_key_masked') else ''}\n"
             f"今日已用：{snapshot.get('today_requests', 0)} 次"
         )
 

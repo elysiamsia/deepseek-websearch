@@ -115,7 +115,10 @@ class TransportError(DeepSeekError):
 class AuthError(DeepSeekError):
     """401：Key 缺失、失效或没有该接口权限。"""
 
-    default_hint = "检查 [api].api_key 是否正确、是否已过期"
+    default_hint = (
+        "检查 [api].api_key 是否正确、是否已过期；官方 Key 以 sk- 开头，"
+        "填错时清空该项即可回退 model.toml"
+    )
 
 
 class InsufficientBalanceError(DeepSeekError):

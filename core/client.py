@@ -222,6 +222,7 @@ class DeepSeekClient:
         self,
         *,
         api_key: str,
+        key_label: str = "",
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = 60.0,
         max_retries: int = 2,
@@ -244,6 +245,7 @@ class DeepSeekClient:
             )
 
         self.api_key = key
+        self._key_label = str(key_label or "").strip()
         self.base_url = normalize_base_url(base_url)
         self.timeout = max(1.0, float(timeout))
         self.max_retries = max(0, int(max_retries))
@@ -436,7 +438,10 @@ class DeepSeekClient:
         if response.status == 400:
             return BadRequestError(detail, status=400)
         if response.status == 401:
-            return AuthError(detail, status=401)
+            # 401 时把「实际用的是哪个 Key」带出来：多数情况是配置里填了一个
+            # 用不了的 Key，而用户以为插件在用 model.toml 里那个能用的
+            suffix = f"（当前 Key：{self._key_label}）" if self._key_label else ""
+            return AuthError(detail + suffix, status=401)
         if response.status == 402:
             return InsufficientBalanceError(detail, status=402)
         if response.status == 403:

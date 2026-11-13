@@ -35,7 +35,7 @@ def write_providers(directory: Path, providers: list[dict[str, str]], *, table_f
 
 
 OFFICIAL = {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api_key": "sk-official"}
-RELAY = {"name": "opencode", "base_url": "https://opencode.ai/zen/go/v1", "api_key": "sk-relay"}
+RELAY = {"name": "opencode", "base_url": "https://opencode.ai/zen/go/v1", "api_key": "sk-relay-0001"}
 
 
 class ResolveApiKeyTests(unittest.TestCase):
@@ -57,15 +57,15 @@ class ResolveApiKeyTests(unittest.TestCase):
 
     def test_config_wins(self) -> None:
         write_providers(self.dir, [OFFICIAL])
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-env"}):
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-env-0001"}):
             key, source = self.resolve(configured="sk-config")
         self.assertEqual((key, source), ("sk-config", "config"))
 
     def test_env_fallback(self) -> None:
         write_providers(self.dir, [OFFICIAL])
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-env"}):
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-env-0001"}):
             key, source = self.resolve()
-        self.assertEqual((key, source), ("sk-env", "env"))
+        self.assertEqual((key, source), ("sk-env-0001", "env"))
 
     def test_model_toml_official(self) -> None:
         write_providers(self.dir, [RELAY, OFFICIAL])
@@ -90,7 +90,7 @@ class ResolveApiKeyTests(unittest.TestCase):
     def test_provider_override(self) -> None:
         write_providers(self.dir, [RELAY, OFFICIAL])
         key, source = self.resolve(provider_name="opencode")
-        self.assertEqual((key, source), ("sk-relay", "model.toml:opencode"))
+        self.assertEqual((key, source), ("sk-relay-0001", "model.toml:opencode"))
 
     def test_provider_override_missing(self) -> None:
         write_providers(self.dir, [OFFICIAL])
@@ -107,11 +107,11 @@ class ResolveApiKeyTests(unittest.TestCase):
             "[[api_providers]]\n"
             'name = "DeepSeek"\n'
             'base_url = "https://api.deepseek.com/v1"\n'
-            "api_key = [\"sk-first\", \"sk-second\"]\n",
+            "api_key = [\"sk-first-0001\", \"sk-second-0001\"]\n",
             encoding="utf-8",
         )
         key, source = self.resolve()
-        self.assertEqual(key, "sk-first")
+        self.assertEqual(key, "sk-first-0001")
         self.assertEqual(source, "model.toml:DeepSeek")
 
     def test_list_typed_key_skips_empty_entries(self) -> None:
@@ -169,6 +169,86 @@ class ProviderSelectionTests(unittest.TestCase):
     def test_candidate_paths_respect_base_dir(self) -> None:
         paths = cred._candidate_paths("model.toml", Path("D:/bot"))
         self.assertEqual([str(item) for item in paths], [str(Path("D:/bot") / "model.toml")])
+
+
+class OfficialFormatTests(unittest.TestCase):
+    """官方端点的 Key 格式校验：明显不是 sk- 的 Key 直接跳过。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.env_patch = mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""})
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+
+    def resolve(self, **kwargs):
+        kwargs.setdefault("model_config_path", "model.toml")
+        return cred.resolve_api_key(base_dir=self.dir, **kwargs)
+
+    def test_bad_config_key_falls_back_to_model_toml(self) -> None:
+        """配置里填了非 sk- 的 Key → 跳过并回退 model.toml（本次 401 的根因）。"""
+
+        write_providers(self.dir, [OFFICIAL])
+        notes: list[str] = []
+        key, source = self.resolve(
+            configured="fsf3" + "x" * 24 + "DmqD",
+            notes=notes,
+        )
+        self.assertEqual((key, source), ("sk-official", "model.toml:DeepSeek"))
+        self.assertTrue(any("config" in item for item in notes))
+        self.assertTrue(any("不是 sk-" in item for item in notes))
+
+    def test_bad_env_key_falls_back_to_model_toml(self) -> None:
+        write_providers(self.dir, [OFFICIAL])
+        notes: list[str] = []
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "not-a-key"}):
+            key, source = self.resolve(notes=notes)
+        self.assertEqual((key, source), ("sk-official", "model.toml:DeepSeek"))
+        self.assertTrue(any("env" in item for item in notes))
+
+    def test_all_candidates_invalid(self) -> None:
+        write_providers(self.dir, [])
+        notes: list[str] = []
+        key, source = self.resolve(configured="fsf3badkey", notes=notes)
+        self.assertEqual((key, source), ("", ""))
+        self.assertTrue(notes)
+
+    def test_skips_invalid_official_provider_then_uses_valid_one(self) -> None:
+        bad = {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "api_key": "fsf3badkey"}
+        good = {"name": "DeepSeek2", "base_url": "https://api.deepseek.com/v1", "api_key": "sk-goodkey123"}
+        write_providers(self.dir, [bad, good])
+        notes: list[str] = []
+        key, source = self.resolve(notes=notes)
+        self.assertEqual((key, source), ("sk-goodkey123", "model.toml:DeepSeek2"))
+        self.assertTrue(any("model.toml:DeepSeek " in item for item in notes))
+
+    def test_relay_endpoint_accepts_any_key(self) -> None:
+        """非官方端点不做格式校验：中转站 Key 可能是任意格式。"""
+
+        write_providers(self.dir, [OFFICIAL])
+        key, source = self.resolve(
+            configured="relay-anything-123",
+            base_url="https://relay.example.com/v1",
+        )
+        self.assertEqual((key, source), ("relay-anything-123", "config"))
+
+    def test_official_endpoint_rejects_bad_config_key_when_base_url_given(self) -> None:
+        write_providers(self.dir, [OFFICIAL])
+        key, source = self.resolve(
+            configured="relay-anything-123",
+            base_url="https://api.deepseek.com",
+        )
+        self.assertEqual((key, source), ("sk-official", "model.toml:DeepSeek"))
+
+    def test_mask_key(self) -> None:
+        self.assertEqual(cred.mask_key("sk-1234567890abcd"), "sk-1****abcd")
+        self.assertEqual(cred.mask_key("short"), "****")
+
+    def test_official_format_predicate(self) -> None:
+        self.assertTrue(cred.looks_like_official_key("sk-abcdef123456"))
+        self.assertFalse(cred.looks_like_official_key("fsf3abcdef123456"))
+        self.assertFalse(cred.looks_like_official_key(""))
 
 
 if __name__ == "__main__":

@@ -80,6 +80,11 @@ python scripts/install_local.py --plugins-dir "<bot>/plugins" --force
 想强制用某个 provider（比如中转站也兼容官方工具接口）：填 `[api].key_provider = "provider 名"`。
 `[api].model_config_path` 可以改第 3 级读的文件。
 
+**格式自检**：目标是官方端点时，每一级候选都必须以 `sk-` 开头，否则跳过它、继续往下一级找，
+并在日志里写明跳过了谁（例如 `config 的 Key 不是 sk- 格式（fsf3****DmqD），已跳过`）。
+这样即便你手滑填错一个 Key，插件也不会拿它去换一个 401，而是安静地回退到 model.toml 里那个能用的。
+走自建中转时不做这个校验——中转站的 Key 长什么样都有可能，插件不替它做主。
+
 ### 字段一览
 
 ```toml
@@ -376,6 +381,15 @@ mpdt plugin check .
 A：插件只认 `api.deepseek.com` 的官方 Key。如果你的对话模型走的是中转站，`model.toml` 里没有官方条目，
 就需要手动填 `[api].api_key` 或设 `DEEPSEEK_API_KEY`；也可以用 `[api].key_provider` 指定某个 provider
 （前提是它兼容官方工具接口）。
+
+**Q：报 401「Your api key: ****xxxx is invalid」，可我的 API 明明能用？**
+A：先看这条 401 末尾的「当前 Key」——它写着实际用的是哪一个、以及掩码后的样子。
+常见情况是 `[api].api_key` 被填成了别的平台的 Token（官方 Key 一定以 `sk-` 开头）。
+1.3.3 起插件会自己识别这种格式不对的 Key 并跳过、自动回退到 `model.toml` 里能用的官方 Key，
+日志里会出现「config 的 Key 不是 sk- 格式（fsf3****DmqD），已跳过」这样的提示。
+最省事的修法：把 `[api].api_key` 清空，让插件走回退链；想固定用某个 Key 再填回去。
+若回退后仍 401，那就是 `model.toml` 里那个 Key 本身过期或被吊销了，去 platform.deepseek.com 换一个。
+`/ds test` 可以随时核对「Key 来源」。
 
 **Q：说了「帮我搜一下」但它没搜 / 搜得太频繁？**
 A：先看日志里有没有「自然语言触发」。没触发说明没命中正则，改 `[trigger].patterns`；

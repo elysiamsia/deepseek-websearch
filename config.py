@@ -56,6 +56,8 @@ class DeepSeekWebSearchConfig(BaseConfig):
                 "DeepSeek API Key。留空时依次回退到：环境变量 DEEPSEEK_API_KEY → "
                 "本实例的 model_config_path（默认 config/model.toml）里 api_providers 中"
                 "指向 api.deepseek.com 的 api_key。"
+                "官方端点只接受 sk- 开头的 Key：填成别的格式时会被自动跳过并回退到下一级"
+                "（日志会写明跳过了谁），不会把坏 Key 发出去换一个 401。"
                 "不读取任何与开发机绑定的文件，换台机器部署也能开箱复用已有的官方 Key"
             ),
             label="API Key",

@@ -20,7 +20,7 @@ from typing import Any, Callable
 from .cache import TTLCache
 from .client import DeepSeekClient, validate_fetch_url
 from .compressor import CompressedText, ContentCompressor
-from .credentials import resolve_api_key
+from .credentials import mask_key, resolve_api_key
 from .errors import (
     BudgetExceededError,
     DeepSeekError,
@@ -102,6 +102,7 @@ class Runtime:
         self._started = False
         self._last_persist = float("-inf")
         self._api_key_source = ""
+        self._api_key_masked = ""
         self.cache = cache or TTLCache(
             max_entries=int(getattr(config.cache, "max_entries", 128)),
             ttl_seconds=float(getattr(config.cache, "ttl_seconds", 600)),
@@ -390,6 +391,7 @@ class Runtime:
         )
         snapshot["cache"] = self.cache.stats()
         snapshot["api_key_source"] = self._api_key_source or "未使用"
+        snapshot["api_key_masked"] = self._api_key_masked
         return snapshot
 
     def cache_stats(self) -> dict[str, Any]:
@@ -481,18 +483,27 @@ class Runtime:
         if self.client is not None:
             return self.client
 
+        notes: list[str] = []
         key, source = resolve_api_key(
             str(getattr(self.config.api, "api_key", "") or ""),
             model_config_path=str(
                 getattr(self.config.api, "model_config_path", "") or "config/model.toml"
             ),
             provider_name=str(getattr(self.config.api, "key_provider", "") or ""),
+            base_url=str(getattr(self.config.api, "base_url", "") or ""),
+            notes=notes,
         )
+        # 跳过原因必须说出来，否则用户只会看到「401」而不知道是配置里的 Key 填错了
+        for note in notes:
+            self._warn(f"DeepSeek API Key：{note}")
         if not key:
-            raise MissingAPIKeyError("未找到 DeepSeek API Key")
+            reason = f"（已跳过：{'；'.join(notes)}）" if notes else ""
+            raise MissingAPIKeyError(f"未找到可用的 DeepSeek API Key{reason}")
         self._api_key_source = source
+        self._api_key_masked = mask_key(key)
         self.client = DeepSeekClient(
             api_key=key,
+            key_label=f"{source}，{mask_key(key)}",
             base_url=str(getattr(self.config.api, "base_url", "") or ""),
             timeout=float(getattr(self.config.api, "timeout_seconds", 60) or 60),
             max_retries=int(getattr(self.config.api, "max_retries", 2) or 0),
@@ -501,7 +512,9 @@ class Runtime:
             verify_ssl=bool(getattr(self.config.api, "verify_ssl", True)),
             logger=self.logger,
         )
-        self._info(f"DeepSeek 搜索客户端已就绪（Key 来源：{source}）")
+        self._info(
+            f"DeepSeek 搜索客户端已就绪（Key 来源：{source}，{mask_key(key)}）"
+        )
         return self.client
 
     def _resolve_count(self, count: int) -> int:

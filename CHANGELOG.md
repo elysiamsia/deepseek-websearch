@@ -2,6 +2,27 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.3] - 2026-11-13
+
+### 修复
+
+- **401 的真正原因**：插件配置 `[api].api_key` 里被填了一个 32 位、`fsf3` 开头的值，
+  它不是 DeepSeek 官方格式（官方 Key 以 `sk-` 开头），发到 `api.deepseek.com` 必然 401；
+  而同一台机器的 `config/model.toml` 里其实躺着一个可用的官方 Key。
+- 解析 Key 时新增**格式自检**：目标为官方端点时，不是 `sk-` 开头的候选会被跳过并继续回退
+  （配置 → 环境变量 → model.toml），每一步跳过都会在日志里写明原因。
+- 401 报错现在会附带**实际使用的 Key 来源与掩码**（例如 `config，fsf3****DmqD`），
+  一眼就能分清是配置里的 Key 失效，还是回退到的 model.toml Key 失效。
+- `/ds test` 的「Key 来源」一行也带掩码，便于核对。
+- 非官方端点（自建中转）不做格式校验，避免误伤任意格式的中转 Key。
+
+### 测试
+
+- 新增 9 条测试（格式谓词、坏 Key 回退、跳过无效 provider、中转端点放行、401 带 Key 来源），
+  总计 236 条。
+- 真机验证：拿 bot 里那个坏 Key 配真实 model.toml 跑一遍，日志输出
+  `DeepSeek API Key：config 的 Key 不是 sk- 格式（fsf3****DmqD），已跳过`，
+  随后用 `model.toml:DeepSeek` 的 Key 搜索成功。
 ## [1.3.2] - 2026-10-24
 
 ### 变更

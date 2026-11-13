@@ -123,6 +123,16 @@ class SearchTests(unittest.IsolatedAsyncioTestCase):
             await client.search("q", count=1)
         self.assertEqual(len(recorder.calls), 1)
 
+    async def test_auth_error_reports_key_source(self) -> None:
+        """401 要带上「实际用的是哪个 Key」，否则用户分不清配置与 model.toml。"""
+
+        recorder = Recorder([json_response({"error": {"message": "invalid key"}}, status=401)])
+        client = make_client(recorder, key_label="config，fsf3****DmqD")
+        with self.assertRaises(errors.AuthError) as ctx:
+            await client.search("q", count=1)
+        self.assertIn("当前 Key", ctx.exception.message)
+        self.assertIn("fsf3****DmqD", ctx.exception.message)
+
     async def test_insufficient_balance(self) -> None:
         recorder = Recorder([json_response({"error": {"message": "no money"}}, status=402)])
         client = make_client(recorder)

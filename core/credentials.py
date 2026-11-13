@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,45 @@ DEFAULT_MODEL_CONFIG = "config/model.toml"
 
 #: 视为「官方 DeepSeek 端点」的主机。
 OFFICIAL_HOSTS = ("api.deepseek.com",)
+
+#: 官方 Key 的粗筛格式：只认 sk- 前缀。
+#: 真实官方 Key 是 sk- + 32 位，这里刻意不校验长度——长度规则会随平台变化，
+#: 唯一稳定的信号是前缀；不做精确校验，只挡掉「明显不是官方 Key」的值
+#: （例如手抄漏字、别的平台 Token），这类值发到 api.deepseek.com 必然 401。
+OFFICIAL_KEY_PATTERN = re.compile(r"^sk-[A-Za-z0-9_-]+$")
+
+
+def looks_like_official_key(key: str) -> bool:
+    """判断 Key 是否符合 DeepSeek 官方格式。
+
+    官方端点只接受 sk- 开头的 Key；配置里常见的错误是把中转站 Key、
+    别的平台 Token 或手抄漏字的内容填进来，这类值发到 api.deepseek.com
+    必然 401，应该在解析阶段就跳过并回退到下一级。
+
+    Args:
+        key: 待检查的 Key。
+
+    Returns:
+        是否符合官方格式。
+    """
+
+    return bool(OFFICIAL_KEY_PATTERN.match((key or "").strip()))
+
+
+def mask_key(key: str) -> str:
+    """脱敏 Key：只保留前 4 位与后 4 位。"""
+
+    value = (key or "").strip()
+    if len(value) <= 8:
+        return "****"
+    return f"{value[:4]}****{value[-4:]}"
+
+
+def _note(notes: list[str] | None, message: str) -> None:
+    """收集解析过程中的跳过原因（调用方用于日志）。"""
+
+    if notes is not None:
+        notes.append(message)
 
 
 def _candidate_paths(configured: str, base_dir: Path | None = None) -> list[Path]:
@@ -126,13 +166,19 @@ def is_official_endpoint(url: str) -> bool:
 
 
 def pick_provider_key(
-    providers: list[dict[str, Any]], provider_name: str = ""
+    providers: list[dict[str, Any]],
+    provider_name: str = "",
+    *,
+    require_official_format: bool = False,
+    notes: list[str] | None = None,
 ) -> tuple[str, str]:
     """从 api_providers 里挑一个可用的 Key。
 
     Args:
         providers: api_providers 条目列表。
         provider_name: 显式指定 provider 名（大小写不敏感）；为空则自动挑官方端点。
+        require_official_format: 是否要求 Key 符合官方 sk- 格式（官方端点时为真）。
+        notes: 跳过原因收集器。
 
     Returns:
         (Key, 来源标识)；找不到时返回 ("", "")。
@@ -140,13 +186,27 @@ def pick_provider_key(
 
     wanted = (provider_name or "").strip().lower()
 
+    def usable(provider: dict[str, Any], name: str) -> str:
+        """取 Key 并按需校验格式。"""
+
+        key = _extract_key(provider.get("api_key"))
+        if not key:
+            return ""
+        if require_official_format and not looks_like_official_key(key):
+            _note(
+                notes,
+                f"model.toml:{name} 的 Key 不是 sk- 格式（{mask_key(key)}），已跳过",
+            )
+            return ""
+        return key
+
     # 1) 用户显式指定 provider
     if wanted:
         for provider in providers:
             name = str(provider.get("name") or "").strip()
             if name.lower() != wanted:
                 continue
-            key = _extract_key(provider.get("api_key"))
+            key = usable(provider, name)
             if key:
                 return key, f"model.toml:{name}"
         return "", ""
@@ -155,17 +215,20 @@ def pick_provider_key(
     official = [
         provider
         for provider in providers
-        if _extract_key(provider.get("api_key"))
-        and is_official_endpoint(str(provider.get("base_url") or ""))
+        if is_official_endpoint(str(provider.get("base_url") or ""))
+        and _extract_key(provider.get("api_key"))
     ]
     if not official:
         return "", ""
 
     # 同名的情况下优先名字里带 deepseek 的，其次保持文件里的顺序
     official.sort(key=lambda item: 0 if "deepseek" in str(item.get("name") or "").lower() else 1)
-    chosen = official[0]
-    name = str(chosen.get("name") or "?").strip()
-    return _extract_key(chosen.get("api_key")), f"model.toml:{name}"
+    for chosen in official:
+        name = str(chosen.get("name") or "?").strip()
+        key = usable(chosen, name)
+        if key:
+            return key, f"model.toml:{name}"
+    return "", ""
 
 
 def resolve_api_key(
@@ -174,33 +237,55 @@ def resolve_api_key(
     env_var: str = ENV_VAR,
     model_config_path: str = DEFAULT_MODEL_CONFIG,
     provider_name: str = "",
+    base_url: str = "",
     base_dir: Path | None = None,
+    notes: list[str] | None = None,
 ) -> tuple[str, str]:
     """按「配置 → 环境变量 → model.toml」解析 API Key。
+
+    当目标是官方端点（api.deepseek.com）时，不符合 sk- 格式的候选会被跳过，
+    并记录到 notes 里——这种 Key 发出去只会 401，不如直接回退到可用的下一级。
 
     Args:
         configured: 插件配置里的 Key。
         env_var: 环境变量名。
         model_config_path: 模型配置文件路径（相对 bot 根目录或绝对路径）。
         provider_name: 强制使用 model.toml 里某个 provider 的 Key。
+        base_url: 目标端点（用于判断是否官方端点）；为空按官方处理。
         base_dir: 显式基目录（测试用）。
+        notes: 跳过原因收集器（调用方用于打日志）。
 
     Returns:
         (Key, 来源标识)，来源取值 config / env / model.toml:<provider> / ""。
     """
 
+    official = is_official_endpoint(base_url) if (base_url or "").strip() else True
+
+    def usable(key: str, label: str) -> bool:
+        """官方端点时校验 Key 格式。"""
+
+        if official and not looks_like_official_key(key):
+            _note(notes, f"{label} 的 Key 不是 sk- 格式（{mask_key(key)}），已跳过")
+            return False
+        return True
+
     value = (configured or "").strip()
-    if value:
+    if value and usable(value, "config"):
         return value, "config"
 
     env_value = (os.environ.get(env_var) or "").strip()
-    if env_value:
+    if env_value and usable(env_value, "env"):
         return env_value, "env"
 
     for path in _candidate_paths(model_config_path, base_dir):
         if not path.is_file():
             continue
-        key, source = pick_provider_key(_load_providers(path), provider_name)
+        key, source = pick_provider_key(
+            _load_providers(path),
+            provider_name,
+            require_official_format=official,
+            notes=notes,
+        )
         if key:
             return key, source
 
