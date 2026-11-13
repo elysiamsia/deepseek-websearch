@@ -16,7 +16,7 @@ from src.core.components.types import ChatType, PermissionLevel
 from ..core.errors import DeepSeekError
 from ..core.formatting import format_error, format_usage_text
 from .common import get_runtime
-from .render import render_fetch_text, render_search_text
+from .render import render_fetch_batch_text, render_fetch_text, render_search_text
 
 logger = get_logger("deepseek_websearch")
 
@@ -31,7 +31,7 @@ HELP_TEXT = """📖 /ds 用法（DeepSeek 官方联网搜索）
      --lang zh,en     限定语言
      --after 2025-01-01   起始日期
      --before 2026-12-31  结束日期
-/ds fetch 链接 [-m 字符数]      抓取网页正文
+/ds fetch 链接 [链接…] [-m 字符数]  抓取网页正文（可一次多个，空格分隔）
 /ds stat                        查看用量与估算费用
 /ds cache                        查看缓存命中情况
 /ds cache clear                  清空缓存（管理员）
@@ -137,20 +137,39 @@ class DeepSeekCommand(BaseCommand):
         return True, self._with_usage(text, runtime, outcome.cost_cny)
 
     async def _handle_fetch(self, runtime: Any, tokens: list[str]) -> tuple[bool, str]:
-        """抓取单个链接。"""
+        """抓取一个或多个链接。"""
 
         try:
             url, max_chars = _parse_fetch_args(tokens)
         except ValueError as exc:
             return False, f"❌ 参数错误：{exc}"
 
-        if not url:
+        urls = _collect_fetch_urls(tokens)
+        if not urls:
             return False, "❌ 请给出要抓取的链接，例如：/ds fetch https://example.com"
 
         # 压缩打开时展示完整压缩结果；关闭时按命令展示上限截断
         display_cap = max_chars or int(
             getattr(runtime.config.fetch, "command_max_chars", 800) or 800
         )
+
+        fetch_many = getattr(runtime, "fetch_many", None)
+        if len(urls) > 1:
+            if fetch_many is None:
+                return False, "❌ 当前运行时不支持一次抓取多个链接，请逐个抓取"
+            try:
+                items = await fetch_many(urls)
+            except DeepSeekError as exc:
+                logger.warning(f"/ds 批量抓取失败：{exc.describe()}")
+                return False, format_error(exc)
+            text = await render_fetch_batch_text(runtime, items, display_cap)
+            cost = sum(
+                item.outcome.cost_cny
+                for item in items
+                if item.ok and item.outcome is not None
+            )
+            return any(item.ok for item in items), self._with_usage(text, runtime, cost)
+
         try:
             outcome = await runtime.fetch(url)
         except DeepSeekError as exc:
@@ -317,6 +336,22 @@ def _parse_search_args(tokens: list[str]) -> tuple[str, dict[str, Any]]:
         index += 1
 
     return " ".join(query_parts).strip(), options
+
+
+def _collect_fetch_urls(tokens: list[str]) -> list[str]:
+    """收集 /ds fetch 后的所有链接（去重保序），用于一次抓取多个网页。"""
+
+    urls: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.lower() in ("-m", "--max-chars"):
+            index += 2
+            continue
+        if not token.startswith("-") and token not in urls:
+            urls.append(token)
+        index += 1
+    return urls
 
 
 def _parse_fetch_args(tokens: list[str]) -> tuple[str, int]:
