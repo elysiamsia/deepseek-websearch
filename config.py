@@ -45,6 +45,15 @@ class DeepSeekWebSearchConfig(BaseConfig):
             label="调试日志",
             tag="debug",
         )
+        prewarm: bool = Field(
+            default=True,
+            description=(
+                "插件加载后在后台预建 TLS 上下文与 HTTP 客户端，把首次搜索的准备成本挪到启动阶段。"
+                "关闭后首次搜索会自己付这份开销（约 0.8 秒），不想让启动多做一点事时可以关"
+            ),
+            label="加载期预热",
+            tag="performance",
+        )
 
     @config_section("api", title="API 与鉴权", tag="security")
     class ApiSection(SectionBase):
@@ -110,6 +119,18 @@ class DeepSeekWebSearchConfig(BaseConfig):
             input_type="number",
             tag="network",
         )
+        keepalive_seconds: int = Field(
+            default=120,
+            ge=0,
+            le=600,
+            description=(
+                "HTTP 长连接的空闲存活秒数。群聊里往往隔几分钟才搜一次，默认 120 秒可避免每次都重新握手；"
+                "填 0 表示使用 httpx 默认的 5 秒"
+            ),
+            label="长连接存活（秒）",
+            input_type="number",
+            tag="performance",
+        )
         use_proxy: bool = Field(
             default=True,
             description="是否读取系统代理环境变量（HTTP_PROXY / HTTPS_PROXY / NO_PROXY）",
@@ -128,6 +149,15 @@ class DeepSeekWebSearchConfig(BaseConfig):
             description="是否校验 TLS 证书；仅在本机证书链有问题时才需要关闭",
             label="校验 TLS",
             tag="security",
+        )
+        reuse_ssl_context: bool = Field(
+            default=True,
+            description=(
+                "是否复用进程内预建的 TLS 上下文。开启后证书只解析一次，首次搜索少等约 0.8 秒；"
+                "关闭则回到 httpx 默认行为（每次新建上下文），一般不需要关"
+            ),
+            label="复用 TLS 上下文",
+            tag="performance",
         )
 
     @config_section("search", title="搜索行为", tag="ai")
@@ -180,6 +210,18 @@ class DeepSeekWebSearchConfig(BaseConfig):
             label="结果正文上限",
             input_type="number",
             tag="text",
+        )
+        fetch_top: int = Field(
+            default=0,
+            ge=0,
+            le=5,
+            description=(
+                "deepseek_search 默认顺带抓取前几条结果的正文（工具参数同名，调用时以参数为准）。"
+                "填 0 表示关闭，只返回列表；调大能省掉模型逐条 fetch 的多轮往返，但正文很占上下文"
+            ),
+            label="顺带抓取前 N 条",
+            input_type="number",
+            tag="performance",
         )
         show_meta: bool = Field(
             default=True,
@@ -238,6 +280,27 @@ class DeepSeekWebSearchConfig(BaseConfig):
             label="命令展示上限",
             input_type="number",
             tag="text",
+        )
+        max_batch: int = Field(
+            default=5,
+            ge=1,
+            le=20,
+            description=(
+                "deepseek_fetch 一次最多抓几个链接（urls 与 url 合并、去重后截断，"
+                "超出部分会在结果里说明）"
+            ),
+            label="单次批量抓取上限",
+            input_type="number",
+            tag="performance",
+        )
+        max_batch_concurrency: int = Field(
+            default=5,
+            ge=1,
+            le=10,
+            description="批量抓取的并发数。调大更快、也更容易触发 429，一般与单次上限持平即可",
+            label="批量抓取并发",
+            input_type="number",
+            tag="performance",
         )
         block_private_hosts: bool = Field(
             default=True,
@@ -399,10 +462,13 @@ class DeepSeekWebSearchConfig(BaseConfig):
             tag="ai",
         )
         count: int = Field(
-            default=5,
+            default=3,
             ge=1,
             le=20,
-            description="自动检索时取几条结果",
+            description=(
+                "自动检索时取几条结果。1.4.0 起默认 3 条（原 5 条），注入更短、LLM 首字更快；"
+                "觉得信息不够可以调回 5"
+            ),
             label="自动检索条数",
             input_type="slider",
             step=1,
@@ -415,10 +481,13 @@ class DeepSeekWebSearchConfig(BaseConfig):
             tag="ai",
         )
         max_inject_chars: int = Field(
-            default=1800,
+            default=800,
             ge=200,
             le=20000,
-            description="注入到消息里的检索结果最大字符数，超出会截断",
+            description=(
+                "注入到消息里的检索结果最大字符数，超出会截断。"
+                "1.4.0 起默认 800（原 1800）：注入越长，LLM 首字延迟越高；想更完整可以调回 1800"
+            ),
             label="注入内容上限",
             input_type="number",
             tag="text",
@@ -531,6 +600,15 @@ class DeepSeekWebSearchConfig(BaseConfig):
             description="最多缓存多少条结果",
             label="缓存条目上限",
             input_type="number",
+            tag="performance",
+        )
+        key_includes_ori_question: bool = Field(
+            default=False,
+            description=(
+                "缓存键是否包含 ori_question（触发本次搜索的用户原话）。关闭时同一 query 换个问法也能命中；"
+                "打开后不同问法各算各的，命中变少、但更贴近字面语义"
+            ),
+            label="缓存键含原始问题",
             tag="performance",
         )
 

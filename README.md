@@ -6,7 +6,7 @@
 给 [Neo-MoFox](https://docs.mofox.chat/) 用的 **DeepSeek 官方联网搜索**插件：直接调用官方
 Search / Fetch 服务（**5 元 / 1000 次成功请求**），让 bot 能查实时信息、读网页正文，再把结果交给 LLM。
 
-当前版本 **v1.3.2**，227 条离线测试，`mpdt plugin check` 零错误零警告，已上架 Neo-MoFox 插件市场。
+当前版本 **v1.4.0**，全量离线测试全绿，`mpdt plugin check` 零错误零警告，已上架 Neo-MoFox 插件市场。
 
 ---
 
@@ -30,8 +30,8 @@ POST /v1/tools/fetch    —— 抓取网页正文
 
 | 能力 | 说明 |
 | --- | --- |
-| LLM 工具 `deepseek_search` | 标题 / 链接 / 站点 / 日期 / 权威度 / 长摘要，支持 `site`、`exclude_site`、`lang`、`after`、`before` 结构化过滤 |
-| LLM 工具 `deepseek_fetch` | 把一个网页抓成 Markdown 正文，纯 JS 站点会温柔地提示你换个来源 |
+| LLM 工具 `deepseek_search` | 标题 / 链接 / 站点 / 日期 / 权威度 / 长摘要，支持 `site`、`exclude_site`、`lang`、`after`、`before` 结构化过滤；`fetch_top` 可一次取回前 N 条正文 |
+| LLM 工具 `deepseek_fetch` | 把网页抓成 Markdown 正文；`urls` 一次并行抓多个（默认上限 5 个），纯 JS 站点会温柔地提示你换个来源 |
 | 自然语言触发 | 「帮我搜一下 xxx」直接触发检索，结果作为「系统注入」追加进本轮消息——**不用打命令，也不靠模型自觉** |
 | 聊天命令 `/ds` | 不依赖 LLM 决策：`/ds 关键词` 直接搜、`/ds fetch 链接` 直接读 |
 | 跨插件服务 | `deepseek_websearch:service:websearch`，结构化返回，别的插件也能借去用 |
@@ -49,7 +49,7 @@ POST /v1/tools/fetch    —— 抓取网页正文
 
 ### 方式一：市场一键安装 / 直接丢 `.mfp`
 
-把 `dist/deepseek_websearch-1.3.2.mfp` 放进 bot 的 `plugins/` 目录，重启 bot 就好。
+把 `dist/deepseek_websearch-1.4.0.mfp` 放进 bot 的 `plugins/` 目录，重启 bot 就好。
 
 ### 方式二：从源码装
 
@@ -93,6 +93,7 @@ enabled = true                 # 总开关，关掉后不产生任何费用
 command_enabled = true         # 是否启用 /ds 命令
 show_usage_in_reply = true     # 命令回复末尾附一行用量
 debug_log = false              # 调试日志（输出 query/条数/耗时，不含 Key）
+prewarm = true                 # 加载期预热 TLS 上下文与客户端（关掉则首搜自己付）
 
 [api]
 api_key = ""                   # 留空 → 环境变量 → 本实例 config/model.toml
@@ -101,9 +102,11 @@ key_provider = ""              # 强制用某个 provider 的 Key
 base_url = "https://api.deepseek.com"
 timeout_seconds = 60
 max_retries = 2                # 429/5xx/网络错误的重试次数
+keepalive_seconds = 120        # 长连接空闲存活；0 = httpx 默认 5 秒
 use_proxy = true               # 是否读取系统代理环境变量
 proxy = ""                     # 显式代理，例如 http://127.0.0.1:7890
 verify_ssl = true
+reuse_ssl_context = true       # 复用进程内 TLS 上下文（关掉回退 httpx 默认）
 
 [search]
 default_count = 8              # 默认返回条数
@@ -111,6 +114,7 @@ max_count = 20                 # 允许的最大条数（官方上限 50）
 default_need_content = false   # 是否默认抓正文（很占 token）
 max_summary_chars = 700        # 单条摘要上限
 max_content_chars = 3000       # need_content 时单条正文上限（压缩打开后不生效）
+fetch_top = 0                  # 顺带抓前 N 条正文（0 = 关闭，上限 5；工具参数优先）
 show_meta = true               # 显示站点/日期/权威度/相关度
 include_untrusted_notice = true
 auto_ori_question = true       # 自动把触发消息作为 ori_question 传入
@@ -119,6 +123,8 @@ max_items_in_command = 6       # /ds 命令展示条数
 [fetch]
 max_chars = 12000              # 抓取正文上限（压缩关闭时按它截断；0 = 不截断）
 command_max_chars = 800        # /ds fetch 在聊天里的展示长度
+max_batch = 5                  # 一次最多抓几个链接（urls 超出部分截断）
+max_batch_concurrency = 5      # 批量抓取的并发数
 block_private_hosts = true     # 拦截本机 / 内网地址（SSRF 防护）
 
 [compress]
@@ -146,9 +152,9 @@ patterns = [                   # 意图正则（命中任意一条就检索）
   "(是什么情况|怎么回事|发生了什么)",
   "有没有.{0,8}(资料|文档|教程)",
 ]
-count = 5                      # 自动检索几条
+count = 3                      # 自动检索几条（1.4.0 起由 5 收紧到 3）
 need_content = false           # 自动检索是否抓正文
-max_inject_chars = 1800        # 注入内容上限
+max_inject_chars = 800         # 注入内容上限（1.4.0 起由 1800 收紧到 800）
 max_query_chars = 120          # 查询词上限（官方 128）
 min_query_chars = 2            # 清理后短于该长度不触发
 cooldown_seconds = 60          # 同一聊天流冷却
@@ -165,6 +171,7 @@ persist_usage = true           # 用量写入 data/json_storage/deepseek_websear
 enabled = true
 ttl_seconds = 600
 max_entries = 128
+key_includes_ori_question = false  # 缓存键是否含用户原话（关了才好「换个问法也命中」）
 ```
 
 ---
@@ -204,7 +211,7 @@ max_entries = 128
 超时、检索失败、无结果都会**原样放行**，不会卡住聊天。没命中时它就是普通聊天，零费用。
 
 > 小声说一句：注入内容会跟着这条用户消息一起进会话历史，这是框架的固有脾气。
-> 介意的话，把 `count` 与 `max_inject_chars` 调小，或者关掉 `[trigger].enabled` 就好。
+> 1.4.0 已经把默认值收紧到 3 条 / 800 字符；还嫌长就继续调小，或者关掉 `[trigger].enabled`。
 
 ### 2. LLM 工具（主路径）
 
@@ -215,6 +222,7 @@ max_entries = 128
   "query": "DeepSeek V4 发布",
   "count": 8,
   "need_content": false,
+  "fetch_top": 0,
   "site": "deepseek.com",
   "exclude_site": "",
   "lang": "zh",
@@ -227,6 +235,13 @@ max_entries = 128
 
 ```json
 { "url": "https://api-docs.deepseek.com/", "max_chars": 12000 }
+```
+
+要一次读多个链接时用 `urls`（与 `url` 合并、去重，`url` 排最前），最多抓
+`[fetch].max_batch` 个，默认 5 个：
+
+```json
+{ "urls": ["https://a.example.com", "https://b.example.com"], "max_chars": 8000 }
 ```
 
 模型会自己判断什么时候该伸手——你只要允许它联网就好。返回的是 Markdown，
@@ -282,6 +297,72 @@ else:
 
 ---
 
+## 性能与并发：把「等」变短
+
+1.4.0 没有改检索语义，改的全是「等」这件事。基线实测里，热连接搜一次本来只要 283–335 ms，
+可**进程内第一次搜索要 1681 ms**——多出来的 1.3 秒几乎都不是 API 的账：
+
+| 项目 | 1.3.x | 1.4.0 |
+| --- | --- | --- |
+| 首次搜索（进程内第一次） | 1681 ms | **≤ 700 ms**（原型实测 464 ms） |
+| 热连接单次搜索 | 283–335 ms | 持平 |
+| 静默 8 秒后搜索 | 397 ms | ≤ 330 ms |
+| 3 个链接抓取 | 384 ms（串行） | 约 189 ms（并行） |
+| 搜索 + 前 3 条正文 | 约 1.2 s（多轮工具调用） | 一次调用 ≤ 700 ms |
+
+钱是 API 收的，秒是插件花的。所以这一版做了三件很朴素的事：
+
+1. **证书只解析一次**。`httpx` 默认按文件路径逐张加载根证书，本机要 850 ms；换成
+   `cadata` 一次性解析、再做进程内单例，约 20 ms。`[api].reuse_ssl_context` 可以关。
+2. **把准备成本挪到启动**。`[plugin].prewarm = true` 时，插件加载后在后台建好 TLS 上下文
+   与 HTTP 客户端，首搜不必现付。这里刻意**不做网络预热**——那会真实计费。
+3. **连接别急着扔**。`[api].keepalive_seconds = 120`，群聊里隔几分钟再问，也不用重新握手。
+
+### 一次抓多个链接：`urls`
+
+`deepseek_fetch` 现在接受 `urls` 数组，与 `url` 合并去重（`url` 排最前），
+用信号量限制并发，单条失败不影响其它条：
+
+```json
+{ "urls": ["https://a.example.com", "https://b.example.com"], "max_chars": 8000 }
+```
+
+上限由 `[fetch].max_batch`（默认 5）控制，并发由 `[fetch].max_batch_concurrency`
+（默认 5）控制。注意：**批量抓取是 N 次 fetch 请求，按 N 次计费**，省的是时间，不是钱。
+
+### 搜索顺带读正文：`fetch_top`
+
+模型原本要「先看搜索结果，再自己挑几条 fetch」，一轮工具往返就是几百毫秒到几秒。
+`fetch_top` 让一次 `deepseek_search` 直接把前 N 条的正文也抓回来：
+
+```json
+{ "query": "DeepSeek V4 发布", "count": 8, "fetch_top": 3 }
+```
+
+- 工具参数优先；没给时用 `[search].fetch_top`（默认 0 = 关闭，上限 5）。
+- 正文照样受 `[search].max_content_chars` 与压缩配置约束。
+- 正文很占上下文，只在你确定要读全文时打开；只是看看标题就别开。
+
+### 这一版新增的配置项
+
+| 段 | 键 | 默认值 | 说明（关掉或填 0 会怎样） |
+| --- | --- | --- | --- |
+| `[api]` | `reuse_ssl_context` | `true` | 回到 `httpx` 默认：每次新建 TLS 上下文，首搜多花约 0.8 秒 |
+| `[api]` | `keepalive_seconds` | `120` | 填 `0` 用 `httpx` 默认的 5 秒，空闲几分钟后要重新握手 |
+| `[plugin]` | `prewarm` | `true` | 加载期不预热，首次搜索自己付准备成本 |
+| `[cache]` | `key_includes_ori_question` | `false` | 打开后缓存键含用户原话，换个问法就不再命中 |
+| `[fetch]` | `max_batch` | `5` | 单次最多抓几个链接（`urls` 超出部分截断） |
+| `[fetch]` | `max_batch_concurrency` | `5` | 调小更保守，调大更快也更容易 429 |
+| `[search]` | `fetch_top` | `0` | `0` = 只返回列表，不额外抓正文 |
+
+全部走配置开关。最坏情况把它们一个个关掉（`reuse_ssl_context = false`、
+`keepalive_seconds = 0`、`prewarm = false`），再把 `[trigger]` 的两个默认值调回 5 / 1800，
+行为就回到了 1.3.x。
+
+> 快不是目的，少让你等才是。省下来的那 1.2 秒，够多看一眼窗外的云了——对不对？
+
+---
+
 ## 结果怎么读
 
 | 字段 | 含义 |
@@ -302,6 +383,7 @@ else:
 - 官方计费：**每 1000 次成功请求 5 元**，失败、无结果、被拦截的请求不计费；单次约 ¥0.005。
 - 插件只在「真正打到上游且拿到结果」时计数：**缓存命中不计费**，空结果也不计费（单独记「无结果」）。
 - `count` 不影响单价，所以一次多取几条，比反复搜同一个词划算。
+- **一次抓多个链接是多次请求**：`urls` 里有几个链接就按几次 fetch 计费，省的是时间不是钱。
 - 想严格控制：`[budget].daily_request_limit` 设上限，`/ds stat` 看当天用量。
 - `/ds test` 会真实消耗一次请求，只拿来排查连通性。
 
@@ -328,6 +410,7 @@ deepseek-websearch/
 ├── config.py              # 配置模型（8 个配置节）
 ├── core/                  # 与框架解耦的核心实现
 │   ├── client.py          # DeepSeek API 客户端（端点白名单 / 重试 / 错误映射）
+│   ├── tls.py             # 进程内共享 TLS 上下文（证书只解析一次）
 │   ├── runtime.py         # 编排：缓存 → 配额 → 请求 → 计费 → 落盘
 │   ├── credentials.py     # Key 解析（config / env / 本实例 model.toml）
 │   ├── query.py           # query 构造与过滤参数校验
@@ -345,10 +428,11 @@ deepseek-websearch/
 │   ├── llm_bridge.py      # 小模型调用桥（llm_api）
 │   ├── render.py          # 压缩/截断 + 格式化统一入口
 │   └── common.py
-├── tests/                 # 227 个单元测试（自带框架替身，不依赖 bot）
+├── tests/                 # 单元测试（自带框架替身，不依赖 bot）
 ├── scripts/
 │   ├── build_mfp.py       # 打包 .mfp
-│   └── install_local.py   # 安装到指定 bot 的 plugins 目录
+│   ├── install_local.py   # 安装到指定 bot 的 plugins 目录
+│   └── bench_live.py      # 五组耗时基准（默认不联网，--live 才真调 API）
 └── docs/
     └── ARCHITECTURE.md
 ```
@@ -363,6 +447,10 @@ python -m unittest discover -s tests -t .
 
 # 打包
 python scripts/build_mfp.py
+
+# 耗时基准（默认只打印测量项目与命令；--live 会真实调用，约 10 次请求）
+python scripts/bench_live.py
+python scripts/bench_live.py --live
 
 # 官方静态检查
 mpdt plugin check .
@@ -385,7 +473,7 @@ A：插件只认 `api.deepseek.com` 的官方 Key。如果你的对话模型走�
 **Q：报 401「Your api key: ****xxxx is invalid」，可我的 API 明明能用？**
 A：先看这条 401 末尾的「当前 Key」——它写着实际用的是哪一个、以及掩码后的样子。
 常见情况是 `[api].api_key` 被填成了别的平台的 Token（官方 Key 一定以 `sk-` 开头）。
-1.3.3 起插件会自己识别这种格式不对的 Key 并跳过、自动回退到 `model.toml` 里能用的官方 Key，
+1.4.0 起插件会自己识别这种格式不对的 Key 并跳过、自动回退到 `model.toml` 里能用的官方 Key，
 日志里会出现「config 的 Key 不是 sk- 格式（fsf3****DmqD），已跳过」这样的提示。
 最省事的修法：把 `[api].api_key` 清空，让插件走回退链；想固定用某个 Key 再填回去。
 若回退后仍 401，那就是 `model.toml` 里那个 Key 本身过期或被吊销了，去 platform.deepseek.com 换一个。
@@ -408,8 +496,34 @@ A：默认 `utils_small`，也可以填 model.toml 里任意【任务名】或�
 **Q：返回 402 / 抓取 404 怎么办？**
 A：402 是余额不足，充值后再试，重试不会成功；404 多半是纯 JS 渲染或页面已删除，换来源就好，别反复硬试同一个链接。
 
+**Q：1.4.0 之后首搜还是慢？**
+A：先确认 `[plugin].prewarm = true`、`[api].reuse_ssl_context = true`，并且**完全重启**过 bot
+（配置不热加载）。首搜只慢一次，之后靠 120 秒的 keepalive 复用连接；想知道在你这台机器上究竟多快，
+可以跑 `python scripts/bench_live.py --live`（约 10 次请求、¥0.05 左右，Key 只打印掩码）。
+
 **Q：能不能拿它当聊天模型用？**
 A：不能，也不打算支持。只封装搜索与抓取两个端点，这是设计约束，不是没做完。
+
+---
+
+## 更新日志
+
+完整记录见 [CHANGELOG.md](CHANGELOG.md)。
+
+### v1.4.0（2026-11-13）
+
+- **提速**：复用 TLS 上下文、加载期预热、keepalive 120 秒、缓存键去掉 `ori_question`，
+  首次搜索从 1681 ms 压到 700 ms 以内；`deepseek_fetch` 支持 `urls` 并行批量抓取，
+  `deepseek_search` 新增 `fetch_top`，一次取回前 N 条正文。
+- **默认值收紧**：`[trigger].count` 5 → 3，`[trigger].max_inject_chars` 1800 → 800。
+- **修复**：并入 1.3.3 的 401 修复——识别非 `sk-` 格式的 Key 并自动回退，
+  401 报错带上实际使用的 Key 来源与掩码。
+
+### v1.3.0（2026-10-24）
+
+- 可选的小模型正文压缩（默认关闭）、三条路径统一的渲染层、`/ds fetch` 展示上限。
+
+更早的 1.2 / 1.1 / 1.0 见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

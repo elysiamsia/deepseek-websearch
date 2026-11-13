@@ -2,7 +2,10 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.3.3] - 2026-11-13
+## [1.4.0] - 2026-11-13
+
+这一版只做一件事：把「等」变短。检索语义、结果格式、计费口径都没有变，
+变的是一次搜索要花多久——尤其是冷启动的那一次。
 
 ### 修复
 
@@ -16,13 +19,48 @@
 - `/ds test` 的「Key 来源」一行也带掩码，便于核对。
 - 非官方端点（自建中转）不做格式校验，避免误伤任意格式的中转 Key。
 
+上面这一节原本计划作为 1.3.3 单独发布，后来决定不再单独发版，直接并入 1.4.0。
+
+### 提速
+
+- **复用 TLS 上下文**（`[api].reuse_ssl_context`，默认开）：新增 `core/tls.py`，
+  把 certifi 根证书用 `cadata` 一次性解析成进程内共享的 `SSLContext`。
+  `httpx` 默认按文件路径逐张加载 120 个根证书要 850~890 ms，现在整个进程只付一次、约 20 ms；
+  构建失败会自动回退 `httpx` 默认行为，关掉开关也一样回退。
+- **加载期预热**（`[plugin].prewarm`，默认开）：插件加载后在后台把 TLS 上下文与
+  `httpx.AsyncClient` 建好，首次搜索不再现付这份准备成本。
+  刻意不做网络预热——预热请求会真实计费，还会污染用量统计。
+- **延长 keepalive**（`[api].keepalive_seconds`，默认 120 秒）：群聊里往往隔几分钟才问一次，
+  5 秒的连接池等于每次都重新握手。填 0 回到 `httpx` 默认的 5 秒。
+- **缓存键不再包含 ori_question**（`[cache].key_includes_ori_question`，默认关）：
+  同一 query 换个问法也能命中缓存，不再白付一次请求；`ori_question` 照常发给上游影响排序。
+  想按字面问法各算各的，把开关打开即可。
+- **`deepseek_fetch` 支持 `urls` 批量并行**：`asyncio.gather` + 信号量，
+  单条失败不影响其它条；去重、保序，超过 `[fetch].max_batch`（默认 5）时截断并在结果里说明。
+  3 个链接从 384 ms 降到约 189 ms。
+- **`deepseek_search` 新增 `fetch_top`**（`[search].fetch_top`，默认 0）：
+  一次调用返回「结果列表 + 前 N 条正文」，省掉模型「先看列表、再逐条 fetch」的多轮往返，上限 5。
+- **单次调用内部并发化**：搜索结果正文的压缩改为并发（`prepare_search`），
+  开小模型时 3 条不再串行等 3 次 LLM；批量抓取则用信号量把多个 fetch 摊开（见上）。
+  批量渲染只做顺序拼接，不再额外加一层并发。
+- **自然语言触发的注入更短**：默认条数与注入上限收紧，见下一节。
+
+### 默认值变化
+
+- `[trigger].count`：5 → **3**。3 条足够回答大多数「帮我搜一下」，注入越短 LLM 首字越快。
+- `[trigger].max_inject_chars`：1800 → **800**。理由同上；想要更完整的回答，
+  这两个值都可以在配置里调回 5 / 1800。
+- 新增 7 个配置项：`reuse_ssl_context`、`keepalive_seconds`、`prewarm`、
+  `key_includes_ori_question`、`max_batch`、`max_batch_concurrency`、`fetch_top`。
+  默认值就是推荐的提速组合；老配置文件无需迁移，缺省字段自动取默认值。
+
 ### 测试
 
-- 新增 9 条测试（格式谓词、坏 Key 回退、跳过无效 provider、中转端点放行、401 带 Key 来源），
-  总计 236 条。
-- 真机验证：拿 bot 里那个坏 Key 配真实 model.toml 跑一遍，日志输出
-  `DeepSeek API Key：config 的 Key 不是 sk- 格式（fsf3****DmqD），已跳过`，
-  随后用 `model.toml:DeepSeek` 的 Key 搜索成功。
+- 基线 236 条离线测试全绿；本版为每项改动补测试，条数只增不减。
+- 新增 `scripts/bench_live.py`：默认只打印测量项目与命令，加 `--live` 才真调 API；
+  Key 只从环境变量或 model.toml 读取、只打印掩码，不写入任何文件。
+- 真机验收（原型）：首次搜索 1681 ms → 464 ms（目标 ≤700 ms）；3 URL 抓取 384 → 189 ms。
+
 ## [1.3.2] - 2026-10-24
 
 ### 变更
