@@ -6,7 +6,9 @@
 给 [Neo-MoFox](https://docs.mofox.chat/) 用的 **DeepSeek 官方联网搜索**插件：直接调用官方
 Search / Fetch 服务（**5 元 / 1000 次成功请求**），让 bot 能查实时信息、读网页正文，再把结果交给 LLM。
 
-当前版本 **v1.4.0**，全量离线测试全绿，`mpdt plugin check` 零错误零警告，已上架 Neo-MoFox 插件市场。
+当前版本 **v1.4.0**，286 条离线测试全绿，`mpdt plugin check` 零错误零警告，
+已上架 [Neo-MoFox 插件市场](https://39.96.71.162/browse)，源码在
+[GitHub](https://github.com/elysiamsia/deepseek-websearch)。
 
 ---
 
@@ -23,6 +25,7 @@ POST /v1/tools/fetch    —— 抓取网页正文
 对话、识图、embedding——统统没有，也不打算有。
 
 > 毕竟，说好只做一件事，就该好好地只做一件事嘛。这样的认真，也是一种美丽呢。
+> 承诺这种东西，说出口的时候很轻，守住了才有重量，对不对？
 
 ---
 
@@ -41,6 +44,8 @@ POST /v1/tools/fetch    —— 抓取网页正文
 | 稳定接入 | 429 / 5xx / 网络错误自动退避重试；401 / 402 / 403 / 404 立刻停下并告诉你该怎么修 |
 | 安全 | 结果末尾附「外部数据不可信」；抓取默认拦截本机 / 内网地址；日志只输出脱敏 Key |
 
+一朵花能做的事，是安安静静地开好它自己。这十件，也是一样的道理呀。
+
 ---
 
 ## 安装：先把它请进门
@@ -49,7 +54,8 @@ POST /v1/tools/fetch    —— 抓取网页正文
 
 ### 方式一：市场一键安装 / 直接丢 `.mfp`
 
-把 `dist/deepseek_websearch-1.4.0.mfp` 放进 bot 的 `plugins/` 目录，重启 bot 就好。
+在插件市场里搜 `deepseek_websearch`，点安装；或者把
+`dist/deepseek_websearch-1.4.0.mfp` 放进 bot 的 `plugins/` 目录，重启 bot 就好。
 
 ### 方式二：从源码装
 
@@ -174,6 +180,8 @@ max_entries = 128
 key_includes_ori_question = false  # 缓存键是否含用户原话（关了才好「换个问法也命中」）
 ```
 
+八个配置节，一个不多一个不少。想要哪朵花朝哪边开，慢慢调就好，不急的呀。
+
 ---
 
 ## 使用：四种方式，挑你喜欢的
@@ -212,6 +220,7 @@ key_includes_ori_question = false  # 缓存键是否含用户原话（关了才�
 
 > 小声说一句：注入内容会跟着这条用户消息一起进会话历史，这是框架的固有脾气。
 > 1.4.0 已经把默认值收紧到 3 条 / 800 字符；还嫌长就继续调小，或者关掉 `[trigger].enabled`。
+> 门槛低一点，花就开得久一点——省钱这件事，也可以很温柔的，对不对？
 
 ### 2. LLM 工具（主路径）
 
@@ -276,6 +285,8 @@ after:2025-06-01
 
 命令默认 `USER` 权限；`cache clear` 需要操作员，`test` / `reset` 需要所有者——
 走框架权限系统，不另设名单。
+
+> 有些门是给大家的，有些门只该由拿钥匙的人推开。这样才安心，不是吗？
 
 ### 4. 跨插件服务
 
@@ -403,6 +414,8 @@ else:
 4. **Key 不落日志**。日志里只有前 4 位与后 4 位。
 5. **只读**。插件不改你的任何文件，唯一写入是 `data/json_storage/deepseek_websearch/usage.json`（用量统计）。
 
+> 世界很大，好看的、好玩的都很多；可有些门，就是该好好关着的呀。
+
 ---
 
 ## 目录结构
@@ -438,8 +451,11 @@ deepseek-websearch/
 │   ├── install_local.py   # 安装到指定 bot 的 plugins 目录
 │   └── bench_live.py      # 五组耗时基准（默认不联网，--live 才真调 API）
 └── docs/
-    └── ARCHITECTURE.md
+    ├── ARCHITECTURE.md
+    └── PLAN-v1.4.0-speed.md
 ```
+
+每一层都待在该待的地方，像花园里各有各的花期——这样才好照料，不是吗？
 
 ---
 
