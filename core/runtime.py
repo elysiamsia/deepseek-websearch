@@ -582,6 +582,12 @@ class Runtime:
             use_proxy=bool(getattr(self.config.api, "use_proxy", True)),
             proxy=str(getattr(self.config.api, "proxy", "") or ""),
             verify_ssl=bool(getattr(self.config.api, "verify_ssl", True)),
+            reuse_ssl_context=bool(
+                getattr(self.config.api, "reuse_ssl_context", True)
+            ),
+            keepalive_seconds=float(
+                getattr(self.config.api, "keepalive_seconds", 120) or 0
+            ),
             logger=self.logger,
         )
         self._info(

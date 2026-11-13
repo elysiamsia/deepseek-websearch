@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from tests import framework_stub
-from tests.helpers import NOW, Clock, FakeClient, FakeStore, build_runtime
+from tests.helpers import NOW, Clock, FakeStore, build_runtime
 
 plugin_mod = framework_stub.import_component("plugin")
 runtime_mod = framework_stub.import_component("core.runtime")

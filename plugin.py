@@ -131,7 +131,7 @@ class DeepSeekWebSearchPlugin(BasePlugin):
         )
 
         # 后台预热：只建客户端不发请求，避免加载期阻塞，也让首次调用少一次初始化抖动
-        if bool(getattr(config.plugin, "prewarm", True)):
+        if enabled and bool(getattr(config.plugin, "prewarm", True)):
             self._prewarm_task = asyncio.create_task(self._prewarm())
 
     async def _prewarm(self) -> None:

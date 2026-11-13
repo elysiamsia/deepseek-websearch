@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from tests import framework_stub
-from tests.helpers import NOW, Clock, FakeClient, FakeStore, build_runtime, sample_result
+from tests.helpers import NOW, Clock, FakeClient, FakeStore, sample_result
 
 runtime_mod = framework_stub.import_component("core.runtime")
 
